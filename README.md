@@ -55,7 +55,7 @@ development environment: it shows the C++ code and the technical documentation a
   game's art, audio or other content, which are not open source.
 - The game itself: [Privacy Policy](https://ruy41321.github.io/Makhia/privacy-policy/) ·
   [End User License Agreement](https://ruy41321.github.io/Makhia/eula/) (also in Italian and French).
-- Contact: support@luigipennisi.dev
+- Support for the game: support@luigipennisi.dev
 
 ---
 
@@ -82,4 +82,4 @@ development environment: it shows the C++ code and the technical documentation a
 - [Design Patterns](Documentation/DesignPatternsUsed.md) · [System Analysis](Documentation/SystemAnalysis.md)
 
 ---
-*For professional inquiries: support@luigipennisi.dev*
+*For professional inquiries: contact@luigipennisi.dev*
