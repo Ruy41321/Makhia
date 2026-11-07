@@ -6,21 +6,21 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "EnhancedInputComponent.h"
+#include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Components/InputComponent.h"
 #include "GameFramework/Controller.h"
 
-#include "Player/PlayerAnimation/MKHPlayerAnimInstance.h"
-#include "Player/Components/Dodge/DodgeSystemComponent.h"
-#include "Player/Components/Crouch/CrouchSystemComponent.h"
-#include "Player/Components/Blocking/BlockingSystemComponent.h"
-#include "Player/Components/BasicMovement/BasicMovementComponent.h"
-#include "Player/Components/Jump/JumpSystemComponent.h"
-#include "Player/Components/Sprint/SprintSystemComponent.h"
-#include "Player/MovementStateMachine/MovementStateMachine.h"
+#include "Character/Components/Crouch/CrouchSystemComponent.h"
+#include "Character/Components/BasicMovement/BasicMovementComponent.h"
+#include "Character/Components/Jump/JumpSystemComponent.h"
+#include "Character/Components/Sprint/SprintSystemComponent.h"
+#include "Character/MovementStateMachine/MovementStateMachine.h"
 
 #include "Player/PlayerState/MKHPlayerState.h"
+#include "Cosmetics/MKHSkinComponent.h"
 #include "GameInstance/MKHGameInstance.h"
 #include "AbilitySystem/MKHAbilitySystemComponent.h"
+#include "AbilitySystem/MKHAbilityTypes.h"
 #include "AbilitySystem/Attributes/MKHAttributeSet.h"
 #include "AbilitySystem/MKHGameplayTags.h"
 #include "Net/UnrealNetwork.h"
@@ -43,13 +43,7 @@ AMKHPlayerCharacter::AMKHPlayerCharacter()
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Player Camera"));
 	Camera->SetupAttachment(CameraBoom);
 
-	DodgeSystem = CreateDefaultSubobject<UDodgeSystemComponent>(TEXT("Dodge System Component"));
-	CrouchSystem = CreateDefaultSubobject<UCrouchSystemComponent>(TEXT("Crouch System Component"));
-	BlockingSystem = CreateDefaultSubobject<UBlockingSystemComponent>(TEXT("Blocking System Component"));
-	BasicMovementSystem = CreateDefaultSubobject<UBasicMovementComponent>(TEXT("Basic Movement Component"));
-	JumpSystem = CreateDefaultSubobject<UJumpSystemComponent>(TEXT("Jump System Component"));
-	SprintSystem = CreateDefaultSubobject<USprintSystemComponent>(TEXT("Sprint System Component"));
-	MovementStateMachine = CreateDefaultSubobject<UMovementStateMachine>(TEXT("Movement State Machine"));
+	SkinComponent = CreateDefaultSubobject<UMKHSkinComponent>(TEXT("Skin Component"));
 
 }
 
@@ -98,7 +92,6 @@ void AMKHPlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	
-	DOREPLIFETIME(AMKHPlayerCharacter, bIsHoldingWeapon);
 	DOREPLIFETIME(AMKHPlayerCharacter, Username);
 }
 
@@ -134,72 +127,22 @@ void AMKHPlayerCharacter::OnRep_Username()
 	OnUsernameChanged.Broadcast(Username);
 }
 
-void AMKHPlayerCharacter::Landed(const FHitResult &Hit)
+void AMKHPlayerCharacter::OnHitInflicted(const FGameplayEventData* GameplayEventData)
 {
-	Super::Landed(Hit);
+	if (!GameplayEventData)
+	{
+		return;
+	}
 	
-	// Delegate landing logic to JumpSystemComponent
-	if (JumpSystem)
+	bool bIsCritical = false;
+	FMKHGameplayEffectContext* MKHContext = FMKHGameplayEffectContext::GetEffectContext(GameplayEventData->ContextHandle);
+	if (MKHContext)
 	{
-		JumpSystem->OnLanded(Hit);
+		bIsCritical = MKHContext->IsCriticalHit();
 	}
-}
-
-void AMKHPlayerCharacter::SetMaxWalkSpeed(float NewSpeed)
-{
-	UCharacterMovementComponent* Movement = GetCharacterMovement();
-	if (Movement)
-	{
-		Movement->MaxWalkSpeed = NewSpeed;
-		Movement->MaxWalkSpeedCrouched = NewSpeed;
-		UE_LOG(LogTemp, Verbose, TEXT("MKHPlayerCharacter: MaxWalkSpeed set to %f"), NewSpeed);
-	}
-}
-
-EMovementStateValue AMKHPlayerCharacter::GetCurrentMovementState() const
-{
-	if (MovementStateMachine)
-	{
-		return MovementStateMachine->GetCurrentState();
-	}
-	return EMovementStateValue::None;
-}
-
-EMovementStateValue AMKHPlayerCharacter::GetPreviousMovementState() const
-{
-	if (MovementStateMachine)
-	{
-		return MovementStateMachine->GetPreviousState();
-	}
-	return EMovementStateValue::None;
-}
-
-bool AMKHPlayerCharacter::TransitionToMovementState(EMovementStateValue NewState, bool bForceTransition)
-{
-	if (MovementStateMachine)
-	{
-		return MovementStateMachine->TransitionToState(NewState, bForceTransition);
-	}
-	return false;
-}
-
-void AMKHPlayerCharacter::Multicast_TransitionToMovementState_Implementation(EMovementStateValue NewState,
-	bool bForceTransition)
-{
-	TransitionToMovementState(NewState, bForceTransition);
-}
-
-FString AMKHPlayerCharacter::GetCurrentMovementStateAsString() const
-{
-	return UMovementStateTypes::MovementStateToString(GetCurrentMovementState());
-}
-
-void AMKHPlayerCharacter::UnsubscribeFromMovementStateChanges(UObject* Subscriber)
-{
-	if (MovementStateMachine)
-	{
-		MovementStateMachine->UnsubscribeFromStateChanges(Subscriber);
-	}
+	float Damage = GameplayEventData->EventMagnitude;
+	FTransform Transform = GameplayEventData->Target->GetActorTransform();
+	ShowFloatingDamageText(Transform, Damage, bIsCritical);
 }
 
 void AMKHPlayerCharacter::PossessedBy(AController* NewController)
@@ -210,11 +153,14 @@ void AMKHPlayerCharacter::PossessedBy(AController* NewController)
 	{
 		InitAbilityActorInfo();
 		BroadcastInitialValues();
+		MKHAbilitySystemComponent->GenericGameplayEventCallbacks.FindOrAdd(MKHGameplayTags::Event::HitInflicted)
+																.AddUObject(this, &AMKHPlayerCharacter::OnHitInflicted);
 	}
 
 	// Authority path (listen-server host): the controller is now set, so the local game instance
 	// username can be committed directly.
 	TrySeedUsernameFromLocalGameInstance();
+	ApplySkinFromPlayerState();
 }
 
 void AMKHPlayerCharacter::OnRep_PlayerState()
@@ -222,6 +168,7 @@ void AMKHPlayerCharacter::OnRep_PlayerState()
 	Super::OnRep_PlayerState();
 	InitAbilityActorInfo();
 	BroadcastInitialValues();
+	ApplySkinFromPlayerState();
 }
 
 void AMKHPlayerCharacter::OnRep_Controller()
@@ -260,16 +207,6 @@ void AMKHPlayerCharacter::TrySeedUsernameFromLocalGameInstance()
 	}
 }
 
-void AMKHPlayerCharacter::Multicast_StopMontage_Implementation(UAnimMontage* MontageToStop, const float InBlendOutTime)
-{
-	if (UAnimInstance* AnimInstance = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
-	{
-		// Stop only the requested montage: a late-arriving stop for a cancelled ability
-		// must never kill the montage of a different ability that has since started.
-		AnimInstance->Montage_Stop(InBlendOutTime, MontageToStop);
-	}
-}
-
 void AMKHPlayerCharacter::Multicast_ResetToSpawnTransform_Implementation(const FTransform& SpawnTransform)
 {
 	// Clear leftover velocity and pending input first: with bOrientRotationToMovement the movement
@@ -284,6 +221,37 @@ void AMKHPlayerCharacter::Multicast_ResetToSpawnTransform_Implementation(const F
 	ApplySpawnViewRotation(SpawnTransform.Rotator());
 }
 
+void AMKHPlayerCharacter::ResetForNewRound(const FTransform& SpawnTransform)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// Multicast because a server-only transform change never restores the rotation on the owning client (see
+	// Multicast_ResetToSpawnTransform); the forced transition is the only way out of the Dead state.
+	Multicast_ResetToSpawnTransform(SpawnTransform);
+	Multicast_TransitionToMovementState(EMovementStateValue::Idle, true);
+}
+
+int32 AMKHPlayerCharacter::GetParticipantCareerLevels() const
+{
+	const AMKHPlayerState* MKHPlayerState = GetPlayerState<AMKHPlayerState>();
+	return IsValid(MKHPlayerState) ? MKHPlayerState->GetCareerLevels() : INDEX_NONE;
+}
+
+FText AMKHPlayerCharacter::GetParticipantDisplayName() const
+{
+	// Player names are data, never translated.
+	if (!Username.IsEmpty())
+	{
+		return FText::AsCultureInvariant(Username);
+	}
+
+	// Not signed in (offline match): no account name, the local player is simply "You".
+	return IsLocallyControlled() ? NSLOCTEXT("MKHPlayerCharacter", "LocalPlayerName", "You") : FText::GetEmpty();
+}
+
 void AMKHPlayerCharacter::ApplySpawnViewRotation(const FRotator& SpawnRotation)
 {
 	AController* OwningController = GetController();
@@ -296,6 +264,16 @@ void AMKHPlayerCharacter::ApplySpawnViewRotation(const FRotator& SpawnRotation)
 	OwningController->SetControlRotation(FRotator(0.f, SpawnRotation.Yaw, 0.f));
 }
 
+void AMKHPlayerCharacter::ApplySkinFromPlayerState()
+{
+	const AMKHPlayerState* MKHPlayerState = GetPlayerState<AMKHPlayerState>();
+	if (!IsValid(MKHPlayerState) || !IsValid(SkinComponent) || MKHPlayerState->GetSkinId().IsNone())
+	{
+		return;
+	}
+
+	SkinComponent->SetSkin(MKHPlayerState->GetSkinId());
+}
 
 void AMKHPlayerCharacter::InitAbilityActorInfo()
 {
@@ -321,76 +299,15 @@ void AMKHPlayerCharacter::InitAbilityActorInfo()
 			{
 				InitClassDefaults();
 			}
+			
+			// Notify the local machine that the player character is fully initialized and ready to be used.
+			OnPlayerCharacterReady.Broadcast();
 		}
 	}
 }
 
 void AMKHPlayerCharacter::InitClassDefaults()
 {
-	// La logica comune (AddCharacterAbilities, InitializeDefaultAttributes, ecc.) ÃƒÆ’Ã‚Â¨ in CharacterBase::InitClassDefaults
+	// The shared logic (AddCharacterAbilities, InitializeDefaultAttributes, ...) lives in ACharacterBase::InitClassDefaults.
 	Super::InitClassDefaults();
-}
-
-void AMKHPlayerCharacter::BindCallbacksToDependencies()
-{
-	// Delegate comuni (Health, Shield) gestite da CharacterBase
-	Super::BindCallbacksToDependencies();
-
-	// Stamina: specifica del player
-	if (IsValid(MKHAbilitySystemComponent) && IsValid(MKHAttributeSet))
-	{
-		// Rebind-safe, same rationale as ACharacterBase::BindCallbacksToDependencies.
-		MKHAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMKHAttributeSet::GetStaminaAttribute()).RemoveAll(this);
-
-		// Stamina
-		MKHAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMKHAttributeSet::GetStaminaAttribute()).AddWeakLambda(this,
-			[this](const FOnAttributeChangeData& Data)
-			{
-				HandleStaminaChanged(Data.OldValue, Data.NewValue, MKHAttributeSet->GetMaxStamina());
-				OnStaminaChanged.Broadcast(Data.OldValue, Data.NewValue, MKHAttributeSet->GetMaxStamina());
-			});
-
-		// Crowd control (Stunned / Staggered): cancel ongoing movement actions when applied.
-		// Rebind-safe: BindCallbacksToDependencies can run again on controller/state re-init.
-		MKHAbilitySystemComponent->RegisterGameplayTagEvent(
-			MKHGameplayTags::State::Stunned, EGameplayTagEventType::NewOrRemoved).RemoveAll(this);
-		MKHAbilitySystemComponent->RegisterGameplayTagEvent(
-			MKHGameplayTags::State::Stunned, EGameplayTagEventType::NewOrRemoved).AddUObject(
-				this, &AMKHPlayerCharacter::HandleCrowdControlTagChanged);
-
-		MKHAbilitySystemComponent->RegisterGameplayTagEvent(
-			MKHGameplayTags::State::Staggered, EGameplayTagEventType::NewOrRemoved).RemoveAll(this);
-		MKHAbilitySystemComponent->RegisterGameplayTagEvent(
-			MKHGameplayTags::State::Staggered, EGameplayTagEventType::NewOrRemoved).AddUObject(
-				this, &AMKHPlayerCharacter::HandleCrowdControlTagChanged);
-	}
-}
-
-void AMKHPlayerCharacter::HandleCrowdControlTagChanged(const FGameplayTag CallbackTag, int32 NewCount)
-{
-	// Only react when the crowd-control effect becomes active; ignore its removal.
-	if (NewCount <= 0)
-		return;
-
-	// Force the character out of crouch (respecting headroom).
-	if (IsValid(CrouchSystem))
-	{
-		CrouchSystem->ForceUncrouch();
-	}
-
-	// Interrupt any in-progress jump so upward movement stops immediately.
-	if (IsValid(JumpSystem))
-	{
-		JumpSystem->InterruptJump();
-	}
-}
-
-void AMKHPlayerCharacter::BroadcastInitialValues()
-{
-	Super::BroadcastInitialValues();
-	
-	if (IsValid(MKHAttributeSet))
-	{
-		OnStaminaChanged.Broadcast(MKHAttributeSet->GetStamina(), MKHAttributeSet->GetStamina(), MKHAttributeSet->GetMaxStamina());
-	}
 }

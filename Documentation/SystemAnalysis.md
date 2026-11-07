@@ -55,7 +55,7 @@ ACharacter (Engine)
 `ACharacterBase` provides:
 - GAS integration (`UMKHAbilitySystemComponent`, `UMKHAttributeSet`).
 - Virtual initialisation hooks (`InitAbilityActorInfo`, `BindCallbacksToDependencies`, `InitClassDefaults`, `BroadcastInitialValues`).
-- Attribute change delegates (`OnHealthChanged`, `OnStaminaChanged`, `OnShieldChanged`).
+- Attribute change delegates (`OnHealthChanged`, `OnStaminaChanged`).
 - Stamina management via the `OutOfStamina` gameplay tag.
 
 `AMKHPlayerCharacter` adds:
@@ -71,9 +71,9 @@ ACharacter (Engine)
 
 See [GASArchitecture.md](GASArchitecture.md) for full details. Key points:
 
-- **Attribute set**: Health, MaxHealth, Shield, MaxShield, Stamina, MaxStamina, DodgeStaminaCost, CritChance, CritDamageMod, IncomingDamage (meta).
-- **Damage pipeline**: Ability → `FDamageEffectInfo` → `ApplyDamageEffect` → `ExecCalc_Damage` (with crit roll) → `IncomingDamage` → `PostGameplayEffectExecute` → Shield/Health split → Health reduction.
-- **Shield damage scaling**: armor model with a shield-break mechanic — see [ShieldDamageScaling.md](ShieldDamageScaling.md).
+- **Attribute set**: Health, MaxHealth, Armor, Stamina, MaxStamina, DodgeStaminaCost, CritChance, CritDamageMod, IncomingDamage (meta).
+- **Damage pipeline**: Ability → `FDamageEffectInfo` → `ApplyDamageEffect` → `ExecCalc_Damage` (with crit roll) → `IncomingDamage` → `PostGameplayEffectExecute` → Health reduction (armor applied in the exec calc).
+- **Armor mitigation**: permanent armor rating with diminishing returns — see [ArmorMitigation.md](ArmorMitigation.md).
 - **Custom effect context**: `FMKHGameplayEffectContext` with serialised `bCriticalHit` flag.
 - **Global override**: `UMKHAbilitySystemGlobals` ensures all effects use the custom context.
 
@@ -196,7 +196,6 @@ Both stat effects and abilities use `TSoftClassPtr` with `FStreamableManager::Re
 |---|---|---|
 | `UInventoryComponent` | `Public/Inventory/` | Manages the item array and CRUD operations |
 | `UInventoryItem` | `Public/Inventory/InventoryItem/` | Represents a single item instance |
-| `FItemDisplayEntry` | `Public/Inventory/` | Lightweight struct for UI display |
 | `UItemTypesToTables` | `Public/Inventory/` | Maps item types to DataTables |
 | `IInventoryInterface` | `Public/Interfaces/` | Interface to access the inventory component |
 
@@ -216,7 +215,6 @@ Model (Data Source)           Controller               View (Widget)
 ACharacterBase          ←→   UWidgetController    →   UMKHSystemWidget
   OnHealthChanged            UHUDOverlayController     UHUDOverlayWidget
   OnStaminaChanged           UInventoryDashController   UInventoryDashboardWidget
-  OnShieldChanged
 UEquipmentManagerComponent
 UInventoryComponent
 ```

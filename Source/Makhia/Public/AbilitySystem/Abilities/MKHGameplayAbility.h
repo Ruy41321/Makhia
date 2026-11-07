@@ -116,6 +116,14 @@ public:
 	void OnMontageFinished();
 	virtual void OnMontageFinished_Implementation();
 
+	/**
+	 * Montage this ability plays on activation; read on the class default object to time its strikes without
+	 * playing it (FMKHAbilityTiming).
+	 *
+	 * @return The montage, or null when the ability plays none.
+	 */
+	UAnimMontage* GetMontageToPlay() const { return MontageToPlay; }
+
 protected:
 	
 	// ==========================================

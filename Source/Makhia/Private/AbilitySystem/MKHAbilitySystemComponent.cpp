@@ -9,6 +9,7 @@
 #include "AbilitySystem/MKHAbilityGrantPayload.h"
 #include "AbilitySystem/MKHGameplayTags.h"
 #include "AbilitySystem/Abilities/MKHGameplayAbility.h"
+#include "AbilitySystem/Effects/MKHEquipmentArmorEffect.h"
 #include "Equipment/EquipmentManagerComponent.h"
 #include "Equipment/EquipmentTypes.h"
 #include "Interfaces/EquipmentInterface.h"
@@ -214,6 +215,13 @@ void UMKHAbilitySystemComponent::OnActivateQueuedAbility(const FGameplayEventDat
 	if (AMKHPlayerController* MKHPC = Cast<AMKHPlayerController>(Controller))
 	{
 		MKHPC->AbilityInputPressed(QueuedAbilityTags.Pop());
+		return;
+	}
+
+	// AI-driven owners (the duel bot) press their inputs straight on the ability system, as their StateTree tasks do.
+	if (IsValid(Controller))
+	{
+		AbilityInputPressed(QueuedAbilityTags.Pop(), false);
 	}
 }
 
@@ -392,7 +400,9 @@ void UMKHAbilitySystemComponent::AddEquipmentEffects(FRPGEquipmentEntry* Equipme
 
 	const FGameplayEffectContextHandle ContextHandle = MakeEffectContext();
 
-	for (const FEquipmentStatEffectDefinition& StatEffect : EquipmentEntry->EffectPackage.StatEffects)
+	ApplyAndTrackBaseArmor(*EquipmentEntry, ContextHandle);
+
+	for (const FEquipmentStatEffectDefinition& StatEffect : EquipmentEntry->Item.EffectPackage.StatEffects)
 	{
 		GrantEquipmentStatEffect(*EquipmentEntry, StatEffect, ContextHandle);
 	}
@@ -417,7 +427,7 @@ void UMKHAbilitySystemComponent::AddEquipmentAbility(FRPGEquipmentEntry* Equipme
 	if (!EquipmentEntry)
 		return;
 
-	for (const FEquipmentAbilityDefinition& AbilityDef : EquipmentEntry->EffectPackage.Abilities)
+	for (const FEquipmentAbilityDefinition& AbilityDef : EquipmentEntry->Item.EffectPackage.Abilities)
 	{
 		GrantEquipmentAbilityDefinition(*EquipmentEntry, AbilityDef);
 	}
@@ -474,11 +484,97 @@ bool UMKHAbilitySystemComponent::HasGrantedAbilityForInputTag(const FGameplayTag
 	return false;
 }
 
+const FGameplayAbilitySpec* UMKHAbilitySystemComponent::FindAbilitySpecForInputTag(const FGameplayTag& InputTag) const
+{
+	if (!InputTag.IsValid())
+	{
+		return nullptr;
+	}
+
+	// Same mapping as DoesSpecMatchInput, without its deliberate over-match for queued attacks.
+	const FGameplayTag SpecInputTag = IsQuickSlotInput(InputTag) ? FGameplayTag(MKHGameplayTags::Input::QuickSlot) : InputTag;
+	for (const FGameplayAbilitySpec& Spec : GetActivatableAbilities())
+	{
+		if (Spec.GetDynamicSpecSourceTags().HasTagExact(SpecInputTag))
+		{
+			return &Spec;
+		}
+	}
+	return nullptr;
+}
+
+const FGameplayAbilitySpec* UMKHAbilitySystemComponent::FindAbilitySpecForAbilityTag(const FGameplayTag& AbilityTag) const
+{
+	if (!AbilityTag.IsValid())
+	{
+		return nullptr;
+	}
+
+	for (const FGameplayAbilitySpec& Spec : GetActivatableAbilities())
+	{
+		if (Spec.GetDynamicSpecSourceTags().HasTagExact(AbilityTag))
+		{
+			return &Spec;
+		}
+	}
+	return nullptr;
+}
+
+void UMKHAbilitySystemComponent::RefreshEquippedSkillInputs(const FEquipmentEffectPackage& Package)
+{
+	for (const FEquipmentAbilityDefinition& Ability : Package.Abilities)
+	{
+		const FGameplayAbilitySpec* FoundSpec = Ability.bIsSkillAbility ? FindAbilitySpecForAbilityTag(Ability.AbilityTag) : nullptr;
+		FGameplayAbilitySpec* Spec = FoundSpec ? FindAbilitySpecFromHandle(FoundSpec->Handle) : nullptr;
+		if (Spec == nullptr)
+		{
+			continue;
+		}
+
+		FGameplayTagContainer& DynamicTags = Spec->GetDynamicSpecSourceTags();
+		DynamicTags.RemoveTags(DynamicTags.Filter(FGameplayTagContainer(MKHGameplayTags::Input::Ability)));
+		DynamicTags.AddTag(Ability.SkillInputTag);
+		if (UMKHAbilityGrantPayload* Payload = Cast<UMKHAbilityGrantPayload>(Spec->SourceObject.Get()))
+		{
+			Payload->InputTag = Ability.SkillInputTag;
+		}
+		MarkAbilitySpecDirty(*Spec);
+	}
+}
+
+FGameplayTag UMKHAbilitySystemComponent::FindInputTagForAbilityTag(const FGameplayTag& AbilityTag) const
+{
+	const FGameplayAbilitySpec* Spec = FindAbilitySpecForAbilityTag(AbilityTag);
+	if (Spec == nullptr)
+	{
+		return FGameplayTag();
+	}
+
+	const FGameplayTagContainer InputTags = Spec->GetDynamicSpecSourceTags().Filter(FGameplayTagContainer(MKHGameplayTags::Input::Ability));
+	return InputTags.IsEmpty() ? FGameplayTag() : InputTags.First();
+}
+
+FGameplayTag UMKHAbilitySystemComponent::ResolveEquipmentAbilityInputTag(const FEquipmentAbilityDefinition& AbilityDef,
+	const UMKHGameplayAbility* AbilityCDO)
+{
+	// Skills get their input tag rolled at item creation; other abilities keep the class default.
+	return (AbilityDef.bIsSkillAbility || !IsValid(AbilityCDO)) ? AbilityDef.SkillInputTag : AbilityCDO->InputTag;
+}
+
 TWeakObjectPtr<UEquipmentManagerComponent> UMKHAbilitySystemComponent::GetWeakEquipmentManager() const
 {
 	if (!AbilityActorInfo.IsValid())
 	{
 		return nullptr;
+	}
+
+	// The duel bot keeps its equipment on the pawn (it has no PlayerController).
+	if (const AActor* Avatar = AbilityActorInfo->AvatarActor.Get(); IsValid(Avatar))
+	{
+		if (UEquipmentManagerComponent* AvatarEquipment = Avatar->FindComponentByClass<UEquipmentManagerComponent>())
+		{
+			return AvatarEquipment;
+		}
 	}
 
 	APlayerController* PlayerController = AbilityActorInfo->PlayerController.Get();
@@ -504,6 +600,27 @@ FRPGEquipmentEntry* UMKHAbilitySystemComponent::FindEquipmentEntry(UEquipmentMan
 	}
 
 	return EquipmentManager->EquipmentList.FindEntryMutable(ItemId, SlotTag);
+}
+
+void UMKHAbilitySystemComponent::ApplyAndTrackBaseArmor(FRPGEquipmentEntry& EquipmentEntry,
+	const FGameplayEffectContextHandle& ContextHandle)
+{
+	const float BaseArmor = EquipmentEntry.GetBaseArmor();
+	if (BaseArmor <= 0.f)
+	{
+		return;
+	}
+
+	const FGameplayEffectSpecHandle SpecHandle = MakeOutgoingSpec(UMKHEquipmentArmorEffect::StaticClass(), 1.f, ContextHandle);
+	if (!SpecHandle.IsValid())
+	{
+		UE_LOG(LogMKHAbility, Warning, TEXT("UMKHAbilitySystemComponent::ApplyAndTrackBaseArmor - Could not build the armor spec for item '%s'."),
+			*EquipmentEntry.Item.ItemTag.ToString());
+		return;
+	}
+
+	SpecHandle.Data->SetSetByCallerMagnitude(MKHGameplayTags::Combat::Data_Armor, BaseArmor);
+	EquipmentEntry.GrantedHandles.AddEffectHandle(ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get()));
 }
 
 void UMKHAbilitySystemComponent::ApplyAndTrackStatEffect(FRPGEquipmentEntry& EquipmentEntry,
@@ -536,7 +653,7 @@ void UMKHAbilitySystemComponent::GrantEquipmentStatEffect(FRPGEquipmentEntry& Eq
 	FStreamableManager& Manager = UAssetManager::GetStreamableManager();
 	const TWeakObjectPtr<UMKHAbilitySystemComponent> WeakThis(this);
 	const TWeakObjectPtr<UEquipmentManagerComponent> WeakEquipmentManager = GetWeakEquipmentManager();
-	const int64 EntryItemID = EquipmentEntry.OriginalItemID;
+	const int64 EntryItemID = EquipmentEntry.Item.ItemID;
 	const FGameplayTag EntrySlotTag = EquipmentEntry.SlotTag;
 
 	Manager.RequestAsyncLoad(StatEffect.EffectClass.ToSoftObjectPath(),
@@ -574,7 +691,7 @@ void UMKHAbilitySystemComponent::GrantEquipmentAbilityDefinition(FRPGEquipmentEn
 	FStreamableManager& Manager = UAssetManager::GetStreamableManager();
 	const TWeakObjectPtr<UMKHAbilitySystemComponent> WeakThis(this);
 	const TWeakObjectPtr<UEquipmentManagerComponent> WeakEquipmentManager = GetWeakEquipmentManager();
-	const int64 EntryItemID = EquipmentEntry.OriginalItemID;
+	const int64 EntryItemID = EquipmentEntry.Item.ItemID;
 	const FGameplayTag EntrySlotTag = EquipmentEntry.SlotTag;
 
 	Manager.RequestAsyncLoad(AbilityDef.AbilityClass.ToSoftObjectPath(),
@@ -597,24 +714,26 @@ FGameplayAbilitySpecHandle UMKHAbilitySystemComponent::GrantEquipmentAbility(con
 	// the class CDO, shared by every owner of this class. See UMKHAbilityGrantPayload.
 	const UMKHGameplayAbility* AbilityCDO = Cast<UMKHGameplayAbility>(Spec.Ability);
 
-	// Skills get their input tag rolled at item creation; other abilities keep the class default.
-	const FGameplayTag InputTag = (AbilityDef.bIsSkillAbility || !AbilityCDO)
-		? AbilityDef.SkillInputTag
-		: AbilityCDO->InputTag;
+	const FGameplayTag InputTag = ResolveEquipmentAbilityInputTag(AbilityDef, AbilityCDO);
 
 	if (InputTag.IsValid())
 	{
 		Spec.GetDynamicSpecSourceTags().AddTag(InputTag);
 	}
 
+	// Dynamic source tags replicate with the spec, the payload does not: the AbilityTag lets every machine
+	// find the ability's tuning row (Documentation/AbilityTuning.md).
+	if (AbilityDef.AbilityTag.IsValid())
+	{
+		Spec.GetDynamicSpecSourceTags().AddTag(AbilityDef.AbilityTag);
+	}
+
 	UMKHAbilityGrantPayload* Payload = NewObject<UMKHAbilityGrantPayload>(this);
 	Payload->InputTag = InputTag;
 	Payload->ProjectileToSpawnTag = AbilityDef.ContextTag;
-	Payload->AttacksData = AbilityDef.AttacksData;
 	Payload->bIsSkillAbility = AbilityDef.bIsSkillAbility;
 	if (AbilityDef.bIsSkillAbility)
 	{
-		Payload->CooldownTime = AbilityDef.CooldownTime;
 		Payload->CooldownTags = AbilityDef.CooldownTag.GetSingleTagContainer();
 	}
 	Spec.SourceObject = Payload;

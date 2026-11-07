@@ -10,6 +10,7 @@ namespace MKHGameplayTags::Combat
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Data_StatusEffectDuration, "Combat.Data.StatusEffectDuration", "Set By Caller Data Tag For Combat");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Data_StatusEffectValue, "Combat.Data.StatusEffectValue", "Set By Caller Data Tag For Combat");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Data_AbilityCooldownTime, "Combat.Data.AbilityCooldownTime", "Set By Caller Data Tag carrying the dynamic skill cooldown duration");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Data_Armor, "Combat.Data.Armor", "Set By Caller Data Tag carrying the base Armor of an equipped armor piece");
 	UE_DEFINE_GAMEPLAY_TAG(InputBufferWindow, "Combat.InputBufferWindow");
 }
 
@@ -33,6 +34,8 @@ namespace MKHGameplayTags::State::Movement
 namespace MKHGameplayTags::State
 {
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(OutOfStamina, "State.General.Stamina.Out", "Character is out of stamina");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Unkillable, "State.General.Unkillable", "Character survives at zero health (training dummy)");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(StaminaRecovery, "State.General.Stamina.Recovery", "Character's stamina is regenerating");
 	UE_DEFINE_GAMEPLAY_TAG(Stunned, "State.Combat.CC.Stunned");
 	UE_DEFINE_GAMEPLAY_TAG(Staggered, "State.Combat.CC.Staggered");
 	UE_DEFINE_GAMEPLAY_TAG(QuickSlotUse, "State.General.QuickSlot.Use");
@@ -42,9 +45,13 @@ namespace MKHGameplayTags::Equip
 {
 	UE_DEFINE_GAMEPLAY_TAG(Category_Equipment, "Item.Equipment");
 	UE_DEFINE_GAMEPLAY_TAG(Category_Weapon, "Item.Equipment.Weapon");
+	UE_DEFINE_GAMEPLAY_TAG(Category_Armor, "Item.Equipment.Armor");
 	UE_DEFINE_GAMEPLAY_TAG(Category_Consumable, "Item.Consumable");
 	UE_DEFINE_GAMEPLAY_TAG(ArmorSlot, "Equipment.Slot.Armor");
 	UE_DEFINE_GAMEPLAY_TAG(WeaponSlot, "Equipment.Slot.Weapon");
+	UE_DEFINE_GAMEPLAY_TAG(HatchetSlot, "Equipment.Slot.Weapon.Hatchet");
+	UE_DEFINE_GAMEPLAY_TAG(SwordSlot, "Equipment.Slot.Weapon.Sword");
+	UE_DEFINE_GAMEPLAY_TAG(HammerSlot, "Equipment.Slot.Weapon.Hammer");
 	UE_DEFINE_GAMEPLAY_TAG(ConsumableQuickSlot1, "Input.Ability.QuickSlot.Consumable.First");
 	UE_DEFINE_GAMEPLAY_TAG(ConsumableQuickSlot2, "Input.Ability.QuickSlot.Consumable.Second");
 	UE_DEFINE_GAMEPLAY_TAG(ConsumableQuickSlot3, "Input.Ability.QuickSlot.Consumable.Third");
@@ -63,6 +70,7 @@ namespace MKHGameplayTags::Input
 	UE_DEFINE_GAMEPLAY_TAG(Attacks, "Input.Ability.Attacks");
 	UE_DEFINE_GAMEPLAY_TAG(Dodge, "Input.Ability.Attacks.Dodge");
 	UE_DEFINE_GAMEPLAY_TAG(Block, "Input.Ability.Attacks.Basics.Block");	
+	UE_DEFINE_GAMEPLAY_TAG(LightAttack, "Input.Ability.Attacks.Basics.Light");
 	UE_DEFINE_GAMEPLAY_TAG(Skill, "Input.Ability.Attacks.Skill");
 	UE_DEFINE_GAMEPLAY_TAG(SkillSlot1, "Input.Ability.Attacks.Skill.First");
 	UE_DEFINE_GAMEPLAY_TAG(SkillSlot2, "Input.Ability.Attacks.Skill.Second");
@@ -81,11 +89,20 @@ namespace MKHGameplayTags::Event
 	UE_DEFINE_GAMEPLAY_TAG(UseQuickSlot, "Event.QuickSlot.Use");
 	UE_DEFINE_GAMEPLAY_TAG(BlockSuccessful, "Event.Combat.BlockSuccessful");
 	UE_DEFINE_GAMEPLAY_TAG(GuardBreak, "Event.Combat.GuardBreak");
+	UE_DEFINE_GAMEPLAY_TAG(LethalHitPrevented, "Event.Combat.LethalHitPrevented");
 	UE_DEFINE_GAMEPLAY_TAG(AttackDodged, "Event.Combat.AttackDodged");
 	UE_DEFINE_GAMEPLAY_TAG(HitInflicted, "Event.Combat.HitInflicted");
 	UE_DEFINE_GAMEPLAY_TAG(HitReceived, "Event.Combat.HitReceived");
+	UE_DEFINE_GAMEPLAY_TAG(EnemyKilled, "Event.Combat.EnemyKilled");
+	UE_DEFINE_GAMEPLAY_TAG(WeaponSheathed, "Event.Weapon.Sheathed");
+	UE_DEFINE_GAMEPLAY_TAG(WeaponUnsheathed, "Event.Weapon.Unsheathed");
 	UE_DEFINE_GAMEPLAY_TAG(MakeAbilityCancellable, "Event.Animation.MakeAbilityCancellable");
 	UE_DEFINE_GAMEPLAY_TAG(ActivateQueuedAbility, "Event.Combat.ActivateQueuedAbility");
+	UE_DEFINE_GAMEPLAY_TAG(AIReactToAttack, "Event.AI.ReactToAttack");
+	UE_DEFINE_GAMEPLAY_TAG(AIDistanceBand, "Event.AI.DistanceBand");
+	UE_DEFINE_GAMEPLAY_TAG(AIDistanceBandCombat, "Event.AI.DistanceBand.Combat");
+	UE_DEFINE_GAMEPLAY_TAG(AIDistanceBandSafe, "Event.AI.DistanceBand.Safe");
+	UE_DEFINE_GAMEPLAY_TAG(AIDistanceBandFar, "Event.AI.DistanceBand.Far");
 }
 
 namespace MKHGameplayTags::Ability
@@ -102,4 +119,49 @@ namespace MKHGameplayTags::Ability
 	UE_DEFINE_GAMEPLAY_TAG(Type_Attacks_Basic_Light, "GameplayAbility.Type.Attacks.Basic.Light")
 	UE_DEFINE_GAMEPLAY_TAG(Type_Attacks_Skill, "GameplayAbility.Type.Attacks.Skill")
 	UE_DEFINE_GAMEPLAY_TAG(Type_Block, "GameplayAbility.Type.Block")
+}
+
+namespace MKHGameplayTags::AIState
+{
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Root, "AI.State", "Duel bot states that can be disabled at runtime");
+	UE_DEFINE_GAMEPLAY_TAG(SafeApproach, "AI.State.SafeApproach");
+	UE_DEFINE_GAMEPLAY_TAG(Attack, "AI.State.Attack");
+	UE_DEFINE_GAMEPLAY_TAG(Bait, "AI.State.Bait");
+	UE_DEFINE_GAMEPLAY_TAG(PlayPassive, "AI.State.PlayPassive");
+	UE_DEFINE_GAMEPLAY_TAG(React, "AI.State.React");
+	UE_DEFINE_GAMEPLAY_TAG(ReactDodge, "AI.State.React.Dodge");
+	UE_DEFINE_GAMEPLAY_TAG(ReactBlock, "AI.State.React.Block");
+	UE_DEFINE_GAMEPLAY_TAG(ReactActivateAbility, "AI.State.React.ActivateAbility");
+	UE_DEFINE_GAMEPLAY_TAG(Idle, "AI.State.Idle");
+
+	const FGameplayTagContainer& GetSelectableStates()
+	{
+		static const FGameplayTagContainer States = FGameplayTagContainer::CreateFromArray(TArray<FGameplayTag>{
+			SafeApproach, Attack, Bait, PlayPassive, React, ReactDodge, ReactBlock, ReactActivateAbility });
+		return States;
+	}
+}
+
+namespace MKHGameplayTags::Misc
+{
+	UE_DEFINE_GAMEPLAY_TAG(PerkDataTable, "StatEffect.Perk");
+}
+
+namespace MKHGameplayTags::Perk
+{
+	UE_DEFINE_GAMEPLAY_TAG(Empower, "StatEffect.Perk.Empower");
+	UE_DEFINE_GAMEPLAY_TAG(Weaken, "StatEffect.Perk.Weaken");
+	UE_DEFINE_GAMEPLAY_TAG(Exposed, "StatEffect.Perk.Exposed");
+	UE_DEFINE_GAMEPLAY_TAG(Reinforced, "StatEffect.Perk.Reinforced");
+	UE_DEFINE_GAMEPLAY_TAG(Stun, "StatEffect.Perk.Stun");
+	UE_DEFINE_GAMEPLAY_TAG(Stagger, "StatEffect.Perk.Stagger");
+}
+
+namespace MKHGameplayTags::SFX
+{
+	UE_DEFINE_GAMEPLAY_TAG(FootstepDefault, "SFX.Foley.Footstep");
+	UE_DEFINE_GAMEPLAY_TAG(UIClick, "SFX.UI.Click");
+	UE_DEFINE_GAMEPLAY_TAG(UIHover, "SFX.UI.Hover");
+	UE_DEFINE_GAMEPLAY_TAG(UIEquip, "SFX.UI.Equip");
+	UE_DEFINE_GAMEPLAY_TAG(UIUnequip, "SFX.UI.Unequip");
 }

@@ -93,9 +93,20 @@ void UMKHAbilitySystemComponent::OnActivateQueuedAbility(const FGameplayEventDat
     {
         // Pop the next tag and re-trigger input handling
         MKHPC->AbilityInputPressed(QueuedAbilityTags.Pop());
+        return;
+    }
+
+    // AI-driven owners (the duel bot) press their inputs straight on the ability system
+    if (IsValid(Controller))
+    {
+        AbilityInputPressed(QueuedAbilityTags.Pop(), false);
     }
 }
 ```
+
+The player's inputs go back through `AMKHPlayerController::AbilityInputPressed` (quick equip when unarmed, skill HUD
+notification); the duel bot has no PlayerController, so its queued inputs (pressed by its StateTree tasks) are replayed
+on its own ASC, the entry point those tasks use.
 
 ### Weapon Swap In Flight (client-side synchronization)
 

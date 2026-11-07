@@ -21,7 +21,7 @@
 
 ## Overview
 
-Makhia uses Unreal Engine's **Gameplay Ability System (GAS)** to manage character attributes (Health, Shield, Stamina), combat logic, equipment effects, and ability activation. The GAS integration is built on several custom classes that extend the default engine types:
+Makhia uses Unreal Engine's **Gameplay Ability System (GAS)** to manage character attributes (Health, Armor, Stamina), combat logic, equipment effects, and ability activation. The GAS integration is built on several custom classes that extend the default engine types:
 
 | Custom Class | Engine Base | Purpose |
 |---|---|---|
@@ -50,6 +50,7 @@ Source/Makhia/
 │   ├── MKHAbilitySystemComponent.h
 │   ├── MKHAbilitySystemGlobals.h
 │   ├── MKHAbilityGrantPayload.h     # Per-grant data via Spec.SourceObject
+│   ├── MKHAbilityTuning.h           # FAttackData + FMKHAbilityTuningRow (balancing/AI table rows)
 │   ├── MKHAbilityTypes.h            # FMKHGameplayEffectContext, FProjectileParams, FDamageEffectInfo
 │   ├── MKHGameplayTags.h            # Native gameplay tag declarations
 │   ├── Abilities/
@@ -94,7 +95,7 @@ AMKHPlayerCharacter::PossessedBy()          [Server]
   └─ InitAbilityActorInfo()
        ├─ Gets ASC and AttributeSet from PlayerState
        ├─ Calls ASC->InitAbilityActorInfo(PlayerState, this)
-       ├─ BindCallbacksToDependencies()   (Health, Shield, Stamina delegates)
+       ├─ BindCallbacksToDependencies()   (Health, Stamina delegates)
        ├─ MovementStateMachine->SyncCurrentStateTagToASC()
        └─ InitClassDefaults()             [Authority only]
             ├─ Loads CharacterClassInfo by CharacterTag
@@ -199,12 +200,14 @@ Each ability may set a `PriorityTag` (`GameplayAbility.Active.Priority.First/Sec
 **Class**: `UMKHAbilityGrantPayload`
 **Location**: `Source/Makhia/Public/AbilitySystem/MKHAbilityGrantPayload.h`
 
-Equipment can grant the same ability class with different data (dynamic skill input tags, per-weapon attack data, rolled cooldowns). Writing that data on the ability CDO would turn the CDO into shared mutable state and cross-contaminate every owner using the same class. Instead:
+Equipment can grant the same ability class with different data (dynamic skill input tags, skill flag, cooldown tags). Writing that data on the ability CDO would turn the CDO into shared mutable state and cross-contaminate every owner using the same class. Instead:
 
-1. `UMKHAbilitySystemComponent::GrantEquipmentAbility` fills a payload (`InputTag`, `ProjectileToSpawnTag`, `AttacksData`, `bIsSkillAbility`, cooldown data) and assigns it to `Spec.SourceObject`.
-2. The input tag is also added to `Spec.GetDynamicSpecSourceTags()`, which is what input matching actually reads (the ability's own `InputTag` member is a CDO-level design value, not consumed per-instance).
+1. `UMKHAbilitySystemComponent::GrantEquipmentAbility` fills a payload (`InputTag`, `ProjectileToSpawnTag`, `bIsSkillAbility`, `CooldownTags`) and assigns it to `Spec.SourceObject`.
+2. The input tag is also added to `Spec.GetDynamicSpecSourceTags()`, which is what input matching actually reads (the ability's own `InputTag` member is a CDO-level design value, not consumed per-instance). The definition's `AbilityTag` is added there too: it identifies the ability's row in the ability tuning table.
 3. `UMKHDamageAbility` / `UMKHProjectileAbility` read the payload in `OnGiveAbility` via the shared `GetGrantPayload(Spec)` helper and override their instance fields. This runs synchronously inside `GiveAbility` on the authority, so the payload does not need to outlive the grant call.
 4. No explicit CDO fallback is needed: these abilities are `InstancedPerActor`, so each instance already starts from the CDO defaults. A null payload (remote clients, where `SourceObject` is not network-addressable; or non-equipment grants) simply leaves those defaults in place. All payload-driven data is consumed server-side, so empty client-side defaults are harmless.
+
+Balancing data (strikes, cooldown time, DMT/AOE reach) is **not** in the payload: every machine reads it from `DT_AbilityTuning` by the `AbilityTag` found in the spec's dynamic source tags, which replicate with the spec. See `AbilityTuning.md`.
 
 Character base abilities (granted via `AddCharacterAbilities`) are plain `UMKHGameplayAbility` BPs with no per-grant data — they carry no payload and rely purely on their CDO `InputTag`.
 
@@ -222,7 +225,7 @@ Character base abilities (granted via `AddCharacterAbilities`) are plain `UMKHGa
 | Attribute | Replicated | Purpose |
 |---|---|---|
 | `Health` / `MaxHealth` | Yes | Current/maximum health, clamped to `[0, MaxHealth]` |
-| `Shield` / `MaxShield` | Yes | Protective shield value, clamped to `[0, MaxShield]` |
+| `Armor` | Yes | Permanent damage reduction from equipped armor, `>= 0`, never consumed by hits ([ArmorMitigation.md](ArmorMitigation.md)) |
 | `Stamina` / `MaxStamina` | Yes | Resource for dodge/sprint/block, clamped to `[0, MaxStamina]` |
 | `DodgeStaminaCost` | Yes | How much Stamina a dodge consumes |
 | `CritChance` | Yes | Probability of a critical hit (0–100) |
@@ -234,14 +237,14 @@ Each replicated attribute has an `OnRep_*` function that calls `GAMEPLAYATTRIBUT
 
 ### Key Overrides
 
-- **`PreAttributeChange`**: clamp-only (Health, Stamina, Shield to their max values). No side effects here — the callback also runs on clients during replication.
+- **`PreAttributeChange`**: clamp-only (Health, Stamina to their max values, Armor to `>= 0`). No side effects here — the callback also runs on clients during replication.
 - **`PostAttributeChange`**: when a max attribute changes, scales the current value proportionally via `AdjustAttributeForMaxChange` so the character keeps the same percentage.
-- **`PostGameplayEffectExecute`**: resolves the meta attributes — `HandleIncomingDamage` (shield/health split, hit events, status effects, death) and `HandleIncomingStaminaDamage` (block/guard-break pipeline).
+- **`PostGameplayEffectExecute`**: resolves the meta attributes — `HandleIncomingDamage` (health damage, hit events, status effects, death) and `HandleIncomingStaminaDamage` (block/guard-break pipeline).
 
 ### Damage Resolution (`HandleIncomingDamage`)
 
 1. If the context is flagged **dodged** (`FMKHGameplayEffectContext::IsDodged`): send `Event.Combat.AttackDodged` to both actors, apply nothing.
-2. Otherwise split the damage between Shield and Health via `CalculateDamageSplit` — **Shield Break** (`ApplyShieldBreak`) if damage ≥ `Shield × 2.0`, normal mitigation (`ApplyShieldDamageMitigation`) otherwise. The scaling model is documented in **[ShieldDamageScaling.md](ShieldDamageScaling.md)**.
+2. Otherwise subtract the (already armor-mitigated, rounded) damage from Health. Armor is applied earlier, in `UExecCalc_Damage::ApplyArmorMitigation` — see **[ArmorMitigation.md](ArmorMitigation.md)**.
 3. Send `Event.Combat.HitReceived` (defender) and `Event.Combat.HitInflicted` (attacker).
 4. Apply the on-hit **status effects** carried by the context (`ApplyStatusEffectsFromContext`), with their duration passed via the `Combat.Data.StatusEffectDuration` set-by-caller.
 5. **Death**: if Health reached 0, `TrySendDeathEvent` sends `Event.Combat.Death` to the avatar — authority-only, avatar-type agnostic (works for players and enemies), guarded by the `State.Movement.Dead` tag against double-firing.
@@ -254,13 +257,11 @@ Runs when the attack was **blocked**:
 2. If stamina damage ≥ current Stamina → **Guard Break**: stamina zeroed, `Event.Combat.GuardBreak` sent to both actors.
 3. Otherwise subtract the stamina damage.
 
-### Shield Damage Scaling
+### Armor Mitigation
 
-The Shield is **armor, not a second health bar**: it scales the damage reaching Health and pays for
-that protection out of its own pool, at a rate that guarantees it always breaks first.
-
-The algorithm, its invariants, the tuning constants and the balance tables are documented in
-**[ShieldDamageScaling.md](ShieldDamageScaling.md)**.
+Armor is a **permanent rating, not a pool**: equipped pieces grant it (helmet 20, legs 30, chest 50),
+hits never wear it down, and it scales every hit by `1 - Armor / (Armor + 100)` before it reaches
+Health. Sources, formula and balance tables are documented in **[ArmorMitigation.md](ArmorMitigation.md)**.
 
 ---
 
@@ -288,16 +289,16 @@ Base class for every ability. Key behaviors:
 
 ### UMKHDamageAbility
 
-- **`AttacksData`** (`TArray<FAttackData>`): per-strike damage percent, stamina damage, and status effects. Indexed by the combo hit counter.
+- **Tuning** (`GetAbilityTuning()`, `GetAttacks()`): the ability's `FMKHAbilityTuningRow`, looked up on every use by `TuningTag` (resolved in `OnGiveAbility`). Its `Attacks` hold per-strike damage percent, stamina damage, and status effects, indexed by the combo hit counter. See `AbilityTuning.md`.
 - **Combo system**: `Event.Animation.ContinueCombo.Start/End` notifies open/close the combo window; re-pressing the input inside the window triggers `OnComboTriggered(++ComboHitCounter)`, otherwise the ability ends.
-- **Skill cooldowns**: skills (`bIsSkillAbility`) apply a generic cooldown effect whose duration travels as the `Combat.Data.AbilityCooldownTime` set-by-caller and whose granted tags come from the rolled `CooldownTags`.
+- **Skill cooldowns**: skills (`bIsSkillAbility`) apply a generic cooldown effect whose duration (tuning `CooldownTime`) travels as the `Combat.Data.AbilityCooldownTime` set-by-caller and whose granted tags come from the rolled `CooldownTags`.
 - **`CaptureDamageEffectInfo`**: fills `FDamageEffectInfo` (base damage from weapon damage × attack percent, stamina damage, status effects, source/target ASC) consumed by `UMKHAbilitySystemLibrary::ApplyDamageEffect`.
 - **`OwningWeapon`**: resolved on activation (authority) through the controller's `UEquipmentManagerComponent`.
 
 ### UMKHMeleeAbility
 
 - **Hit scans**: `Event.Animation.HitScan.Start/End` notifies (bound authority-only) drive `AMKHWeaponBase::HitScanStart/End` with the captured damage info.
-- **DMT (Directional Movement Technique)**: `UMKHAbilityTask_ApplyDMT` is a ticking task that picks the best target in a radius/angle (score = alignment + proximity) and interpolates the character's rotation/position towards it during the attack. Re-triggered on every combo strike and by the `Event.Animation.ApplyDMT` notify. Note: it moves the character with `SetActorLocation` outside the CharacterMovementComponent — acceptable for short bursts, but a known source of server corrections under heavy latency.
+- **DMT (Directional Movement Technique)**: radius, angle and stop distance come from the ability's tuning row. `UMKHAbilityTask_ApplyDMT` is a ticking taskthat picks the best target in a radius/angle (score = alignment + proximity) and interpolates the character's rotation/position towards it during the attack. Re-triggered on every combo strike and by the `Event.Animation.ApplyDMT` notify. Note: it moves the character with `SetActorLocation` outside the CharacterMovementComponent — acceptable for short bursts, but a known source of server corrections under heavy latency.
 
 ### UMKHProjectileAbility
 
@@ -313,13 +314,16 @@ Execution calculations are **pure computation**: they read captures/set-by-calle
 ### ExecCalc_Damage
 
 1. Early-out if the target is dead.
-2. **Block check** (`IsAttackBlocked`): target has `State.Movement.Blocking` and faces the attacker (2D dot product > 0) → the attack is blocked:
+2. **Block check** (`IsAttackBlocked`): target has `State.Movement.Blocking` and faces the attacker (2D dot product > 0, via `ComputeDefenderFacingDot`) → the attack is blocked:
    - Reads `Combat.Data.StaminaDamage` set-by-caller, reduces it by the defender weapon's block stability (`RefineStaminaDamage`), outputs to `IncomingStaminaDamage`.
 3. Otherwise (**health damage path**):
    - Reads `Combat.Data.Damage` set-by-caller.
    - **Dodge check**: target has `State.Movement.Dodging` → sets `bDodged` on the context and outputs the would-be damage (the attribute set skips application and only notifies).
-   - **Crit roll**: `RandRange(1,100) <= CritChance` → `Damage × (1 + CritDamageMod)`; result flagged on the context (`bCriticalHit`).
+   - **Back attack check** (`IsBackAttack`): attacker inside the defender's rear cone (`BackAttackRearConeAngleDegrees`, 120°) → the crit roll is skipped and the hit always crits.
+   - **Crit roll**: back attack, or `RandRange(1,100) <= CritChance` → `Damage × (1 + CritDamageMod)`; result flagged on the context (`bCriticalHit`).
    - Outputs to `IncomingDamage`.
+
+Both the block check and the back attack check read the front/back geometry from the same helper (`ComputeDefenderFacingDot`: defender forward · direction to attacker, flattened on Z), so they can never disagree. The rear cone (dot ≤ -0.5) is strictly narrower than the half space the block check rejects (dot > 0), which makes a back attack impossible to block and leaves a neutral side band that is neither.
 
 ### ExecCalc_DodgeCost
 
@@ -360,13 +364,14 @@ Extends the default effect context with:
        ├─ Target dead?      → no output
        ├─ Blocked (facing)? → IncomingStaminaDamage (reduced by block stability)
        ├─ Dodged?           → context.bDodged, IncomingDamage (skipped later)
+       ├─ Back attack?      → crit guaranteed (rear cone, no roll)
        └─ Else crit roll    → context.bCriticalHit, IncomingDamage
               │
 5. UMKHAttributeSet::PostGameplayEffectExecute (server-side effects)
        ├─ HandleIncomingStaminaDamage: BlockSuccessful → stamina loss / GuardBreak
        └─ HandleIncomingDamage:
             ├─ bDodged → AttackDodged events, no damage
-            ├─ Shield break / mitigation → Shield & Health reduction
+            ├─ Health reduction (armor already applied in the exec calc)
             ├─ HitReceived / HitInflicted events
             ├─ Status effects from context (Data.StatusEffectDuration set-by-caller)
             └─ Health ≤ 0 → Event.Combat.Death (authority, once, any avatar type)

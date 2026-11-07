@@ -10,7 +10,7 @@
 #include "Inventory/InventoryComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "Player/MKHPlayerCharacter.h"
-#include "Player/MovementStateMachine/MovementStateMachine.h"
+#include "Character/MovementStateMachine/MovementStateMachine.h"
 #include "Player/PlayerController/MKHPlayerController.h"
 
 UQuickSlotManagerComponent::UQuickSlotManagerComponent()
@@ -33,6 +33,7 @@ void UQuickSlotManagerComponent::AddQuickSlot(const FGameplayTag& QuickSlotTag, 
 	RemoveQuickSlot(ItemID);
 	QuickSlotTagMap.Add(QuickSlotTag, ItemID);
 	SyncQuickSlotEntriesFromMap();
+	OnQuickSlotsChanged.Broadcast();
 
 	if (QuickSlotTag.MatchesTag(MKHGameplayTags::Input::WeaponQuickSlotCategory) && !QuickEquipWeaponSlotTag.IsValid())
 	{
@@ -56,6 +57,7 @@ void UQuickSlotManagerComponent::RemoveQuickSlot(int64 ItemID)
 	const bool bRemovedQuickEquipWeapon = ExistingKey->MatchesTagExact(QuickEquipWeaponSlotTag);
 	QuickSlotTagMap.Remove(*ExistingKey);
 	SyncQuickSlotEntriesFromMap();
+	OnQuickSlotsChanged.Broadcast();
 
 	if (bRemovedQuickEquipWeapon)
 	{
@@ -125,6 +127,17 @@ int64 UQuickSlotManagerComponent::GetQuickSlotItemID(const FGameplayTag& QuickSl
 	return 0;
 }
 
+bool UQuickSlotManagerComponent::IsItemQuickSlotted(int64 ItemID) const
+{
+	return ItemID != 0 && QuickSlotTagMap.FindKey(ItemID) != nullptr;
+}
+
+FGameplayTag UQuickSlotManagerComponent::FindQuickSlotTagByItemID(int64 ItemID) const
+{
+	const FGameplayTag* QuickSlotTag = ItemID != 0 ? QuickSlotTagMap.FindKey(ItemID) : nullptr;
+	return QuickSlotTag ? *QuickSlotTag : FGameplayTag();
+}
+
 bool UQuickSlotManagerComponent::TryEquipWeapon()
 {
 	if (!QuickEquipWeaponSlotTag.IsValid())
@@ -172,12 +185,12 @@ void UQuickSlotManagerComponent::SetQuickEquipWeaponSlotTag(const FGameplayTag& 
 	}
 
 	QuickEquipWeaponSlotTag = NewQuickEquipWeaponSlotTag;
+	OnQuickEquipWeaponSlotChanged.Broadcast(QuickEquipWeaponSlotTag);
 
 	if (AActor* Owner = GetOwner(); IsValid(Owner) && !Owner->HasAuthority())
 	{
 		ServerSetQuickEquipWeaponSlotTag(NewQuickEquipWeaponSlotTag);
 	}
-
 }
 
 void UQuickSlotManagerComponent::SyncQuickSlotMapFromEntries()
@@ -222,6 +235,12 @@ void UQuickSlotManagerComponent::SetCanTriggerActivation(const bool bNewCanTrigg
 void UQuickSlotManagerComponent::OnRep_QuickSlotTagMap()
 {
 	SyncQuickSlotMapFromEntries();
+	OnQuickSlotsChanged.Broadcast();
+}
+
+void UQuickSlotManagerComponent::OnRep_QuickEquipWeaponSlotTag()
+{
+	OnQuickEquipWeaponSlotChanged.Broadcast(QuickEquipWeaponSlotTag);
 }
 
 void UQuickSlotManagerComponent::HandleQuickSlotActivation(const FGameplayTag& QuickSlotTag)

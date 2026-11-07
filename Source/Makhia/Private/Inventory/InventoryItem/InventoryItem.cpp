@@ -2,9 +2,9 @@
 
 #include "Inventory/InventoryItem/InventoryItem.h"
 
+#include "Data/MKHDataSubsystem.h"
 #include "Equipment/EquipmentDefinition.h"
 #include "Equipment/EquipmentManagerComponent.h"
-#include "Interfaces/InventoryInterface.h"
 #include "Inventory/InventoryComponent.h"
 
 UInventoryItem* UInventoryItem::CreateFromInventoryEntry(UObject* WorldContextObject, const FRPGInventoryEntry& InEntry)
@@ -37,38 +37,50 @@ UInventoryItem* UInventoryItem::CreateFromEquipmentEntry(UObject* WorldContextOb
 	return NewItem;
 }
 
+UInventoryItem* UInventoryItem::CreateFromItemEntry(UObject* WorldContextObject, const FMKHItemEntry& InItem)
+{
+	if (!IsValid(WorldContextObject))
+	{
+		return nullptr;
+	}
+
+	UInventoryItem* NewItem = NewObject<UInventoryItem>(WorldContextObject);
+	if (IsValid(NewItem))
+	{
+		NewItem->InitFromItemEntry(InItem);
+	}
+	return NewItem;
+}
+
+void UInventoryItem::InitFromItemEntry(const FMKHItemEntry& InItem)
+{
+	Item = InItem;
+	SlotTag = FGameplayTag();
+	bIsEquipped = false;
+	bIsQuickSlotted = false;
+	QuickSlotTag = FGameplayTag();
+	ResolveItemDefinition();
+}
+
 void UInventoryItem::InitFromInventoryEntry(const FRPGInventoryEntry& InEntry)
 {
-	ItemTag = InEntry.ItemTag;
+	Item = InEntry.Item;
 	SlotTag = FGameplayTag();
-	RarityTag = InEntry.RarityTag;
-	Quantity = InEntry.Quantity;
-	ItemName = InEntry.ItemName;
-	EffectPackage = InEntry.EffectPackage;
-	ItemID = InEntry.ItemID;
 	bIsEquipped = InEntry.bIsUsed;
 	bIsQuickSlotted = InEntry.bIsQuickSlotted;
 	QuickSlotTag = InEntry.QuickSlotTag;
-	ConsumableCooldownTime = InEntry.ConsumableCooldownTime;
-	ConsumableCooldownTag = InEntry.ConsumableCooldownTag;
 	ResolveItemDefinition();
 }
 
 void UInventoryItem::InitFromEquipmentEntry(const FRPGEquipmentEntry& InEquipEntry)
 {
-	ItemTag = InEquipEntry.EntryTag;
+	Item = InEquipEntry.Item;
+	Item.Quantity = 1;
 	SlotTag = InEquipEntry.SlotTag;
-	RarityTag = InEquipEntry.RarityTag;
-	Quantity = 1;
-	EffectPackage = InEquipEntry.EffectPackage;
-	ItemID = InEquipEntry.OriginalItemID;
 	bIsEquipped = true;
 	bIsQuickSlotted = false;
 	QuickSlotTag = FGameplayTag();
-	ConsumableCooldownTime = 0.f;
-	ConsumableCooldownTag = FGameplayTag();
 	ResolveItemDefinition();
-	ItemName = ItemDefinition.ItemName;
 }
 
 void UInventoryItem::CopyFrom(const UInventoryItem* Other)
@@ -84,70 +96,73 @@ void UInventoryItem::CopyFrom(const UInventoryItem* Other)
 
 void UInventoryItem::CopyCoreDataFrom(const UInventoryItem& Other)
 {
-	ItemTag = Other.ItemTag;
-	SlotTag = Other.SlotTag;
-	RarityTag = Other.RarityTag;
-	Quantity = Other.Quantity;
-	ItemName = Other.ItemName;
-	EffectPackage = Other.EffectPackage;
-	ItemID = Other.ItemID;
+	Item = Other.Item;
 	bIsEquipped = Other.bIsEquipped;
 	bIsQuickSlotted = Other.bIsQuickSlotted;
 	QuickSlotTag = Other.QuickSlotTag;
+	ItemDefinition = Other.ItemDefinition;
+	ItemName = Other.ItemName;
+	SlotTag = Other.SlotTag;
+	Icon = Other.Icon;
+	WeaponHudIcon = Other.WeaponHudIcon;
+	BaseWeaponDamage = Other.BaseWeaponDamage;
+	BlockingStability = Other.BlockingStability;
+	BaseArmorGiven = Other.BaseArmorGiven;
+	Description = Other.Description;
+	CategoryName = Other.CategoryName;
 	ConsumableCooldownTime = Other.ConsumableCooldownTime;
 	ConsumableCooldownTag = Other.ConsumableCooldownTag;
-	ItemDefinition = Other.ItemDefinition;
-	Icon = Other.Icon;
-	BaseWeaponDamage = Other.BaseWeaponDamage;
-	Description = Other.Description;
 }
 
 bool UInventoryItem::TryResolveItemDefinition(FMasterItemDefinition& OutItemDefinition) const
 {
-	const UWorld* World = GetWorld();
-	if (!IsValid(World))
+	const UMKHDataSubsystem* DataSubsystem = UMKHDataSubsystem::Get(this);
+	if (!IsValid(DataSubsystem))
 	{
 		return false;
 	}
 
-	APlayerController* PC = World->GetFirstPlayerController();
-	if (!IsValid(PC) || !PC->Implements<UInventoryInterface>())
-	{
-		return false;
-	}
-
-	const UInventoryComponent* InventoryComp = IInventoryInterface::Execute_GetInventoryComponent(PC);
-	if (!IsValid(InventoryComp))
-	{
-		return false;
-	}
-
-	OutItemDefinition = InventoryComp->GetItemDefinitionByTag(ItemTag);
-	return true;
+	return DataSubsystem->GetItemDefinition(Item.ItemTag, OutItemDefinition);
 }
 
 void UInventoryItem::CacheDerivedDataFromItemDefinition()
 {
+	ItemName = ItemDefinition.ItemName;
 	Icon = ItemDefinition.Icon;
+	WeaponHudIcon = ItemDefinition.WeaponHudIcon;
+	Description = ItemDefinition.ItemDescription;
+	ConsumableCooldownTime = ItemDefinition.ConsumableProps.CooldownTime;
+	ConsumableCooldownTag = ItemDefinition.ConsumableProps.CooldownTag;
 	BaseWeaponDamage = 0.f;
+	BlockingStability = 0.f;
+	BaseArmorGiven = 0.f;
+	CategoryName = UMKHDataSubsystem::GetItemCategoryNameForContext(this, Item.ItemTag);
 
 	if (IsValid(ItemDefinition.EquipmentItemProps.EquipmentClass))
 	{
 		if (const UEquipmentDefinition* EquipmentDefinition = GetDefault<UEquipmentDefinition>(ItemDefinition.EquipmentItemProps.EquipmentClass))
 		{
 			BaseWeaponDamage = EquipmentDefinition->BaseDamage;
+			BlockingStability = EquipmentDefinition->BlockStabilityPercent;
+			BaseArmorGiven = EquipmentDefinition->BaseArmorGiven;
+			SlotTag = EquipmentDefinition->SlotTag;
 		}
 	}
-
-	Description = ItemDefinition.ItemDescription;
 }
 
 void UInventoryItem::ResetDerivedData()
 {
 	ItemDefinition = FMasterItemDefinition();
+	ItemName = FText();
 	Icon = nullptr;
+	WeaponHudIcon = nullptr;
 	BaseWeaponDamage = 0.f;
+	BlockingStability = 0.f;
+	BaseArmorGiven = 0.f;
 	Description = FText();
+	CategoryName = FText();
+	ConsumableCooldownTime = 0.f;
+	ConsumableCooldownTag = FGameplayTag();
 }
 
 void UInventoryItem::ResolveItemDefinition()
@@ -162,4 +177,3 @@ void UInventoryItem::ResolveItemDefinition()
 	ItemDefinition = ResolvedDefinition;
 	CacheDerivedDataFromItemDefinition();
 }
-

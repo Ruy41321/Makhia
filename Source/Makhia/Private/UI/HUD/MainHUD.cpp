@@ -4,18 +4,29 @@
 #include "UI/HUD/MainHUD.h"
 
 #include "AbilitySystem/MKHGameplayTags.h"
+#include "Character/CharacterBase.h"
+#include "Components/WidgetComponent.h"
+#include "EngineUtils.h"
 #include "GameFramework/PlayerState.h"
 #include "GameMode/MKHGameState.h"
 #include "MKHLogChannels.h"
-#include "Player/MKHPlayerCharacter.h"
 #include "Player/PlayerController/MKHPlayerController.h"
 #include "UI/HUD/GameMenu/MKHGameMenuWidget.h"
 #include "UI/HUD/HUDOverlay/HUDOverlayWidget.h"
 #include "UI/HUD/Inventory/InventoryDashboardWidget.h"
 #include "UI/HUD/MatchOver/MatchOverWidget.h"
+#include "UI/HUD/MKHOverheadBarVisibilityComponent.h"
+#include "UI/HUD/Settings/MKHSettingsScreenWidget.h"
 #include "UI/WidgetControllers/HUDOverlayController.h"
 #include "UI/WidgetControllers/InventoryDashboardController.h"
 #include "UI/WidgetControllers/MKHGameMenuController.h"
+
+const FName AMainHUD::HideWithHUDTag(TEXT("MKH.HideWithHUD"));
+
+AMainHUD::AMainHUD()
+{
+	OverheadBarVisibility = CreateDefaultSubobject<UMKHOverheadBarVisibilityComponent>(TEXT("OverheadBarVisibility"));
+}
 
 void AMainHUD::BeginPlay()
 {
@@ -33,6 +44,22 @@ void AMainHUD::BeginPlay()
 	PlayerController->ChangeFocus(EFocusOption::Game);
 	CreateHUDOverlayWidget();
 	BindMatchOverEvent();
+
+	if (UWorld* World = GetWorld())
+	{
+		ActorSpawnedHandle = World->AddOnActorSpawnedHandler(FOnActorSpawned::FDelegate::CreateUObject(this, &AMainHUD::OnActorSpawned));
+	}
+}
+
+void AMainHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->RemoveOnActorSpawnedHandler(ActorSpawnedHandle);
+	}
+	ActorSpawnedHandle.Reset();
+
+	Super::EndPlay(EndPlayReason);
 }
 
 UHUDOverlayController* AMainHUD::GetHUDOverlayWidgetController()
@@ -56,6 +83,7 @@ void AMainHUD::CreateHUDOverlayWidget()
 		Controller->SetHUDOverlayWidget(HUDOverlayWidget);
 		Controller->BroadcastInitialValues();
 		HUDOverlayWidget->AddToViewport();
+		ApplyHUDOverlayOpacity();   // may be created during the match intro or while the player hides the HUD
 
 		// The overlay's match-info sub-widget reacts only to OnMatchPhaseChanged transitions. On the
 		// listen-server host the initial phase may already have been broadcast before this widget bound,
@@ -67,6 +95,68 @@ void AMainHUD::CreateHUDOverlayWidget()
 				GameState->BroadcastCurrentPhase();
 			}
 		}
+	}
+}
+
+void AMainHUD::SetHUDOverlayHidden(bool bHideOverlay)
+{
+	bOverlayHiddenByIntro = bHideOverlay;
+	ApplyHUDHiddenState();
+}
+
+void AMainHUD::ToggleHUDHiddenByPlayer()
+{
+	bOverlayHiddenByPlayer = !bOverlayHiddenByPlayer;
+	ApplyHUDHiddenState();
+}
+
+void AMainHUD::ApplyHUDHiddenState() const
+{
+	ApplyHUDOverlayOpacity();
+
+	const bool bHideWidgets = IsHUDOverlayHidden();
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		if (HidesWithHUD(**It))
+		{
+			SetActorWidgetsHidden(**It, bHideWidgets);
+		}
+	}
+}
+
+bool AMainHUD::HidesWithHUD(const AActor& Actor)
+{
+	return Actor.IsA<ACharacterBase>() || Actor.ActorHasTag(HideWithHUDTag);
+}
+
+void AMainHUD::SetActorWidgetsHidden(const AActor& Actor, const bool bHideWidgets)
+{
+	TInlineComponentArray<UWidgetComponent*> WidgetComponents(&Actor);
+	for (UWidgetComponent* WidgetComponent : WidgetComponents)
+	{
+		if (IsValid(WidgetComponent))
+		{
+			// UpdateWidget adds/removes the screen-space widget now: the component may have stopped ticking.
+			WidgetComponent->SetHiddenInGame(bHideWidgets);
+			WidgetComponent->UpdateWidget();
+		}
+	}
+}
+
+void AMainHUD::OnActorSpawned(AActor* SpawnedActor) const
+{
+	if (IsValid(SpawnedActor) && IsHUDOverlayHidden() && HidesWithHUD(*SpawnedActor))
+	{
+		SetActorWidgetsHidden(*SpawnedActor, true);
+	}
+}
+
+void AMainHUD::ApplyHUDOverlayOpacity() const
+{
+	if (IsValid(HUDOverlayWidget))
+	{
+		// Opacity, not visibility: the overlay's own widgets keep managing their visibility.
+		HUDOverlayWidget->SetRenderOpacity(IsHUDOverlayHidden() ? 0.f : 1.f);
 	}
 }
 
@@ -99,12 +189,26 @@ UInventoryDashboardController* AMainHUD::GetInventoryWidgetController()
 
 void AMainHUD::ToggleGameMenu()
 {
+	// The settings screen sits on top of the menu, so Esc dismisses it first.
+	if (IsValid(SettingsScreenWidget))
+	{
+		SettingsScreenWidget->RequestClose();
+		return;
+	}
+
 	if (IsValid(InventoryDashboardWidget) && InventoryDashboardWidget->bIsOpen)
 	{
 		InventoryDashboardWidget->CloseInventoryDashboard();
 		return;
 	}
-	
+
+	// The credits and legal windows are modal over the menu: Esc closes them and leaves the menu open.
+	if (IsValid(GameMenuWidget) && GameMenuWidget->IsModalWindowOpen())
+	{
+		GameMenuWidget->CloseModalWindows();
+		return;
+	}
+
 	if (!IsValid(GameMenuWidget))
 	{
 		CreateGameMenuWidget();
@@ -274,7 +378,7 @@ void AMainHUD::OnMatchRestarted()
 	DestroyMatchOverWidget();
 }
 
-void AMainHUD::OnMatchOver(AMKHPlayerCharacter* WinningPlayer, bool bIsDraw)
+void AMainHUD::OnMatchOver(ACharacterBase* WinningPlayer, bool bIsDraw)
 {
 	// Any menu still open would sit on top of the result panel and keep stealing the focus.
 	DestroyGameMenuWidget();
@@ -283,6 +387,7 @@ void AMainHUD::OnMatchOver(AMKHPlayerCharacter* WinningPlayer, bool bIsDraw)
 	const APlayerState* WinningPlayerState = IsValid(WinningPlayer) ? WinningPlayer->GetPlayerState() : nullptr;
 
 	// Comparing player states rather than pawns: the losing pawn is often already destroyed by now.
+	// A winning bot has no player state, which reads as a defeat for the local player.
 	const bool bLocalPlayerWon = IsValid(PlayerController)
 		&& WinningPlayerState != nullptr
 		&& WinningPlayerState == PlayerController->PlayerState;
@@ -369,4 +474,67 @@ void AMainHUD::BindGameMenuWidgetDelegates()
 				PlayerController->ChangeFocus(EFocusOption::Game);
 			}
 		});
+}
+
+// ============================================================
+// Settings Screen
+// ============================================================
+
+void AMainHUD::CreateSettingsWidget()
+{
+	if (IsValid(SettingsScreenWidget))
+	{
+		return;
+	}
+
+	if (!IsValid(SettingsScreenWidgetClass))
+	{
+		UE_LOG(LogMKHInput, Warning, TEXT("MainHUD: SettingsScreenWidgetClass is not set."));
+		return;
+	}
+
+	SettingsScreenWidget = CreateWidget<UMKHSettingsScreenWidget>(PlayerController, SettingsScreenWidgetClass);
+	if (!IsValid(SettingsScreenWidget))
+	{
+		return;
+	}
+
+	SettingsScreenWidget->OnSettingsClosed.AddUObject(this, &AMainHUD::OnSettingsClosed);
+	SettingsScreenWidget->AddToViewport();
+}
+
+void AMainHUD::DestroySettingsWidget()
+{
+	if (!IsValid(SettingsScreenWidget))
+	{
+		return;
+	}
+
+	SettingsScreenWidget->OnSettingsClosed.RemoveAll(this);
+	SettingsScreenWidget->RemoveFromParent();
+	SettingsScreenWidget = nullptr;
+}
+
+void AMainHUD::ToggleSettingsWidget()
+{
+	if (IsValid(SettingsScreenWidget))
+	{
+		DestroySettingsWidget();
+	}
+	else
+	{
+		CreateSettingsWidget();
+	}
+}
+
+void AMainHUD::OnSettingsClosed()
+{
+	DestroySettingsWidget();
+
+	// Leaving the settings hands the player back to gameplay rather than to the menu underneath.
+	// CloseGameMenu already restores the game focus through FOnCloseGameMenuDelegate.
+	if (IsValid(GameMenuWidget) && GameMenuWidget->IsOpen())
+	{
+		GameMenuWidget->CloseGameMenu();
+	}
 }

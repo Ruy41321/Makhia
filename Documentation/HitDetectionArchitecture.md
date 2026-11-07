@@ -65,8 +65,9 @@ need at the moment a hit is confirmed:
 | Weapon resolution | `OwningWeapon` / `InitOwningWeapon()` | Resolves the weapon actor from the avatar's attached actors; works on every machine because the weapon replicates already attached |
 | Self buffs | `TryApplySelfActivationStatusEffects()` | Authority-only, once per combo strike, guaranteed to run before the strike's damage spec is created (so buffs like Empower are captured by the damage calculation) |
 
-Per-grant data (attack data, cooldowns, projectile tag) is injected at grant time through
-`UMKHAbilityGrantPayload` on `Spec.SourceObject` — never by mutating the class CDO.
+Per-grant data (skill flag, cooldown tags, projectile tag) is injected at grant time through
+`UMKHAbilityGrantPayload` on `Spec.SourceObject` — never by mutating the class CDO. Balancing data
+(strikes, cooldown time, DMT/AOE reach) comes from the ability tuning table (`AbilityTuning.md`).
 
 ---
 

@@ -22,6 +22,11 @@ public:
 	UFUNCTION(BlueprintImplementableEvent)
 	void OnWidgetControllerSet();
 
+protected:
+
+	/** Gets the widget controller assigned by the HUD (null until SetWidgetController is called). */
+	UWidgetController* GetWidgetController() const;
+
 private:
 
 	UPROPERTY(BlueprintReadOnly, meta = (AllowprivateAccess = true))

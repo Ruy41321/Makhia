@@ -9,8 +9,10 @@
 class UEquipmentManagerComponent;
 class UGameplayAbility;
 class UGameplayEffect;
+class UMKHGameplayAbility;
 struct FEquipmentStatEffectDefinition;
 struct FEquipmentAbilityDefinition;
+struct FEquipmentEffectPackage;
 struct FRPGEquipmentEntry;
 
 /** Delegate fired after default attributes are granted to the owning avatar. */
@@ -91,7 +93,7 @@ public:
 	// =========================================================================================
 
 	/**
-	 * Grants all gameplay effects declared by an equipment entry.
+	 * Grants all gameplay effects of an equipment entry: the definition's base armor and the rolled stat effects.
 	 * @param EquipmentEntry Mutable equipment entry owning granted effect handles.
 	 */
 	void AddEquipmentEffects(FRPGEquipmentEntry* EquipmentEntry);
@@ -138,6 +140,52 @@ public:
 	bool HasGrantedAbilityForInputTag(const FGameplayTag& InputTag) const;
 
 	/**
+	 * Finds the granted spec an input tag drives, with the matching AbilityInputPressed uses: every quick slot input
+	 * (Input.Ability.QuickSlot.*) drives the spec bound to Input.Ability.QuickSlot (GA_QuickSlot), the other inputs
+	 * the spec bound to the tag itself. Lets AI tasks press a quick slot input and follow the ability it starts.
+	 *
+	 * @param InputTag The input tag to resolve.
+	 * @return The spec, or null when no granted ability handles the input.
+	 */
+	const FGameplayAbilitySpec* FindAbilitySpecForInputTag(const FGameplayTag& InputTag) const;
+
+	/**
+	 * Finds the granted spec of an equipment ability by its AbilityTag (GrantEquipmentAbility puts the AbilityTag in
+	 * the spec's dynamic source tags, next to the input tag).
+	 *
+	 * @param AbilityTag AbilityTag of the ability (e.g. GameplayAbility.Sword.Basic.Light).
+	 * @return The spec, or null when no granted ability carries the tag (e.g. the weapon is not in hand).
+	 */
+	const FGameplayAbilitySpec* FindAbilitySpecForAbilityTag(const FGameplayTag& AbilityTag) const;
+
+	/**
+	 * Server: moves the granted skills of the weapon in hand to the inputs now on its item, in place: the specs stay,
+	 * so cooldowns and the ability instances are untouched. See Documentation/InventoryDashboard.md.
+	 *
+	 * @param Package Abilities of the equipped weapon, with their new SkillInputTag.
+	 */
+	void RefreshEquippedSkillInputs(const FEquipmentEffectPackage& Package);
+
+	/**
+	 * Finds the input that activates a granted equipment ability, so AI tasks can press it like the player's key.
+	 *
+	 * @param AbilityTag AbilityTag of the ability.
+	 * @return The Input.Ability.* tag of its spec, or an empty tag when the ability is not granted.
+	 */
+	FGameplayTag FindInputTagForAbilityTag(const FGameplayTag& AbilityTag) const;
+
+	/**
+	 * Input tag rule of GrantEquipmentAbility: a skill uses the input rolled on its item (SkillInputTag), any other
+	 * ability the InputTag of its class. Lets the AI know the input of an ability that is not granted yet (the
+	 * sheathed weapon's), which it gets once the weapon is in hand.
+	 *
+	 * @param AbilityDef  Definition of the ability, from the item's effect package.
+	 * @param AbilityCDO  Class default object of AbilityDef.AbilityClass; null when the class is not loaded.
+	 * @return The input tag the ability is (or will be) granted with; empty when unknown.
+	 */
+	static FGameplayTag ResolveEquipmentAbilityInputTag(const FEquipmentAbilityDefinition& AbilityDef, const UMKHGameplayAbility* AbilityCDO);
+
+	/**
 	 * Removes a loose ability-priority tag on the authority, on behalf of the owning client.
 	 *
 	 * The owning client is the authority on the cancellable window (anim-notify driven): the
@@ -172,6 +220,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "GAS|Abilities")
 	bool IsWeaponSwapInFlight() const { return bWeaponSwapInFlight; }
 
+	
 private:
 	// =========================================================================================
 	// Internal Input Logic
@@ -236,11 +285,23 @@ private:
 	// Internal Equipment Logic
 	// =========================================================================================
 
-	/** Resolves the owning equipment manager through the player controller interface. */
+	/**
+	 * Resolves the owning equipment manager: on the avatar first (the duel bot keeps it on its pawn), then through the
+	 * player controller's IEquipmentInterface. Used by the async grants of equipment abilities and stats.
+	 */
 	TWeakObjectPtr<UEquipmentManagerComponent> GetWeakEquipmentManager() const;
 
 	/** Finds a mutable equipment entry by item id and slot tag in the provided manager. */
 	FRPGEquipmentEntry* FindEquipmentEntry(UEquipmentManagerComponent* EquipmentManager, int64 ItemId, const FGameplayTag& SlotTag) const;
+
+	/**
+	 * Applies the base Armor of the entry's definition (UMKHEquipmentArmorEffect) and tracks its handle on the entry.
+	 * Does nothing for items without base armor.
+	 *
+	 * @param EquipmentEntry  Entry owning the granted handles.
+	 * @param ContextHandle   Effect context shared by the entry's effects.
+	 */
+	void ApplyAndTrackBaseArmor(FRPGEquipmentEntry& EquipmentEntry, const FGameplayEffectContextHandle& ContextHandle);
 
 	/** Applies one equipment stat effect and tracks its active handle on the entry. Used to simplify logic. */
 	void ApplyAndTrackStatEffect(FRPGEquipmentEntry& EquipmentEntry, const FEquipmentStatEffectDefinition& StatEffect, const FGameplayEffectContextHandle& ContextHandle);
@@ -256,5 +317,5 @@ private:
 
 	/** Builds and grants a single ability spec from an equipment ability definition. */
 	FGameplayAbilitySpecHandle GrantEquipmentAbility(const FEquipmentAbilityDefinition& AbilityDef);
-
+	
 };

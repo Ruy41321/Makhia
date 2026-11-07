@@ -4,6 +4,7 @@
 #include "AbilitySystem/Abilities/MKHAOEAbility.h"
 
 #include "MKHLogChannels.h"
+#include "AbilitySystem/MKHAbilityTuning.h"
 #include "Engine/EngineTypes.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "UObject/ObjectKey.h"
@@ -46,6 +47,11 @@ void UMKHAOEAbility::HitScanEnd_Implementation()
 // Protected / Internal Logic
 // ============================================================
 
+float UMKHAOEAbility::GetHitValidationMaxRange() const
+{
+	return GetAbilityTuning().AOERadius + AOEHitValidationSlack;
+}
+
 bool UMKHAOEAbility::PerformAOESphereTrace(AActor* AvatarActor, TArray<FHitResult>& OutHits) const
 {
 	const FVector Center = AvatarActor->GetActorLocation();
@@ -59,7 +65,7 @@ bool UMKHAOEAbility::PerformAOESphereTrace(AActor* AvatarActor, TArray<FHitResul
 		AvatarActor,
 		Center,
 		Center + FVector(0.f, 0.f, 1.f),
-		AOERadius,
+		GetAbilityTuning().AOERadius,
 		AOEObjectTypes,
 		false,
 		ActorsToIgnore,

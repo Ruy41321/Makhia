@@ -21,9 +21,9 @@
 
 ### Where
 
-- `UMovementStateMachine` — `Source/Makhia/Public/Player/MovementStateMachine/MovementStateMachine.h`
-- `UMovementState` (base) — `Source/Makhia/Public/Player/MovementStateMachine/MovementState.h`
-- 10 concrete states — `Source/Makhia/Public/Player/MovementStateMachine/States/`
+- `UMovementStateMachine` — `Source/Makhia/Public/Character/MovementStateMachine/MovementStateMachine.h`
+- `UMovementState` (base) — `Source/Makhia/Public/Character/MovementStateMachine/MovementState.h`
+- 10 concrete states — `Source/Makhia/Public/Character/MovementStateMachine/States/`
 
 ### How
 
@@ -53,7 +53,7 @@ The state machine never contains `if (currentState == Walking)` branches. All be
 ### Where
 
 - `UMovementStateMachine::OnStateChanged` delegate
-- `ACharacterBase::OnHealthChanged`, `OnStaminaChanged`, `OnShieldChanged` delegates
+- `ACharacterBase::OnHealthChanged`, `OnStaminaChanged` delegates
 - `UMKHAbilitySystemComponent::OnAttributesGiven` delegate
 
 ### How
@@ -70,7 +70,7 @@ OnStateChanged.Broadcast(OldState, NewState);
 StateMachine->OnStateChanged.AddDynamic(this, &UMKHMKHPlayerAnimInstance::OnMovementStateChanged);
 ```
 
-The same pattern is used for attribute changes: `ACharacterBase` broadcasts `OnHealthChanged`, `OnStaminaChanged`, and `OnShieldChanged` when GAS attribute callbacks fire. UI widget controllers subscribe to these to update HUD elements.
+The same pattern is used for attribute changes: `ACharacterBase` broadcasts `OnHealthChanged` and `OnStaminaChanged` when GAS attribute callbacks fire. UI widget controllers subscribe to these to update HUD elements.
 
 ### Why
 
@@ -146,9 +146,9 @@ The base class defines the skeleton of the initialisation algorithm. Subclasses 
 ```
 ACharacterBase (template)
   InitAbilityActorInfo()           → blank in base
-  BindCallbacksToDependencies()    → binds Health, Shield delegates
+  BindCallbacksToDependencies()    → binds the Health delegate
   InitClassDefaults()              → loads abilities/attributes from CharacterClassInfo
-  BroadcastInitialValues()         → broadcasts initial Health, Shield values
+  BroadcastInitialValues()         → broadcasts the initial Health value
 
 AMKHPlayerCharacter (override)
   InitAbilityActorInfo()           → gets ASC from PlayerState, calls Super hooks

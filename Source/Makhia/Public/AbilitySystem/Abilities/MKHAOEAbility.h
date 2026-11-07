@@ -10,7 +10,7 @@
  * Melee-derived ability that damages every valid target around the player at once.
  *
  * Instead of driving the weapon's native melee scan, the HitScanStart notify performs a single
- * multi sphere trace for objects centered on the avatar with radius AOERadius. Every unique
+ * multi sphere trace for objects centered on the avatar with the tuning row's AOERadius. Every unique
  * actor detected is routed into the standard melee hit pipeline inherited from
  * UMKHMeleeAbility: applied directly on the authority (listen host, AI) or shipped to the
  * server as replicated target data and validated there before applying damage.
@@ -41,7 +41,7 @@ protected:
 
 	/**
 	 * Performs the AOE hit detection: a single multi sphere trace for objects centered on the
-	 * avatar with radius AOERadius, replacing the weapon's native melee scan. Every unique
+	 * avatar with the tuning row's AOERadius, replacingthe weapon's native melee scan. Every unique
 	 * actor detected is forwarded into the inherited melee hit pipeline (direct authoritative
 	 * processing or replicated target data to the server).
 	 */
@@ -58,7 +58,7 @@ protected:
 	 *
 	 * @return The maximum accepted hit distance.
 	 */
-	virtual float GetHitValidationMaxRange() const override { return AOERadius + AOEHitValidationSlack; }
+	virtual float GetHitValidationMaxRange() const override;
 
 	/**
 	 * Disables the swing-cone validation check: the AOE hits all around the player.
@@ -93,15 +93,11 @@ private:
 	// Properties
 	// ==========================================
 
-	/** Radius (Unreal units) of the AOE sphere trace centered on the player. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true", ClampMin = "0"), Category = "AOE Ability | Core Settings")
-	float AOERadius = 150.f;
-
 	/** Object types detected by the AOE sphere trace. Defaults to Pawn. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"), Category = "AOE Ability | Core Settings")
 	TArray<TEnumAsByte<EObjectTypeQuery>> AOEObjectTypes;
 
-	/** Extra distance added to AOERadius by server hit validation, absorbing client/server position divergence under latency and target capsule extents. */
+	/** Extra distance added to the tuning row's AOERadius by server hit validation, absorbing client/server position divergence under latency and target capsule extents. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true", ClampMin = "0"), Category = "AOE Ability | Hit Validation")
 	float AOEHitValidationSlack = 150.f;
 

@@ -18,8 +18,7 @@ void UMKHAttributeSet::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME_CONDITION_NOTIFY(UMKHAttributeSet, Stamina, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UMKHAttributeSet, MaxStamina, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UMKHAttributeSet, DodgeStaminaCost, COND_None, REPNOTIFY_Always);
-	DOREPLIFETIME_CONDITION_NOTIFY(UMKHAttributeSet, Shield, COND_None, REPNOTIFY_Always);
-	DOREPLIFETIME_CONDITION_NOTIFY(UMKHAttributeSet, MaxShield, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UMKHAttributeSet, Armor, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UMKHAttributeSet, CritChance, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UMKHAttributeSet, CritDamageMod, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UMKHAttributeSet, AdditiveBaseDamage, COND_None, REPNOTIFY_Always);
@@ -56,9 +55,9 @@ void UMKHAttributeSet::ClampAttribute(const FGameplayAttribute& Attribute, float
 	{
 		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxStamina());
 	}
-	else if (Attribute == GetShieldAttribute())
+	else if (Attribute == GetArmorAttribute())
 	{
-		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxShield());
+		NewValue = FMath::Max(NewValue, 0.f);
 	}
 	else if (Attribute == GetAdditiveBaseDamageAttribute())
 	{
@@ -119,13 +118,6 @@ void UMKHAttributeSet::PostAttributeChange(const FGameplayAttribute& Attribute, 
 		Health.SetBaseValue(FMath::Clamp(Health.GetBaseValue(), 0.f, NewValue));
 		Health.SetCurrentValue(ClampedHealth);
 	}
-	else if (Attribute == GetMaxShieldAttribute())
-	{
-		AdjustAttributeForMaxChange(GetShieldAttribute(), OldValue, NewValue);
-		const float ClampedShield = FMath::Clamp(GetShield(), 0.f, NewValue);
-		Shield.SetBaseValue(FMath::Clamp(Shield.GetBaseValue(), 0.f, NewValue));
-		Shield.SetCurrentValue(ClampedShield);
-	}
 	else if (Attribute == GetMaxStaminaAttribute())
 	{
 		AdjustAttributeForMaxChange(GetStaminaAttribute(), OldValue, NewValue);
@@ -182,67 +174,20 @@ void UMKHAttributeSet::AdjustAttributeForMaxChange(
 	ASC->ApplyModToAttribute(AffectedAttribute, EGameplayModOp::Override, NewCurrentValue);
 }
 
-// Shield damage scaling tuning. Full model, invariants and balance tables:
-// see Documentation/ShieldDamageScaling.md
+// Armor mitigation tuning. Formula, balance tables and rationale: see Documentation/ArmorMitigation.md
 
-/** How many times faster the Shield drains its own pool than Health: a full shield breaks at (1 - 1/Ratio) health. */
-static constexpr float ShieldWear_DrainRatio = 2.f;
+/** Armor rating that halves incoming damage: the reduction is Armor / (Armor + this), so it never reaches 100%. */
+static constexpr float ArmorForHalfReduction = 100.f;
 
-/** Extra pool spent per absorbed point once the shield is empty: a battered shield protects less efficiently. */
-static constexpr float ShieldWear_DegradationPenalty = 1.f;
-
-/** Cap on the rebalancing boost applied when the shield is proportionally healthier than Health. */
-static constexpr float ShieldBalance_MaxBoost = 10.f;
-
-/** Incoming damage above (CurrentShield * this) shatters the whole pool instead of chipping it. */
-static constexpr float ShieldBreak_DamageMultiplier = 2.f;
-
-float UMKHAttributeSet::CalculateShieldDrainRatio(const float ShieldFraction, const float HealthFraction)
+float UMKHAttributeSet::CalculateArmorDamageReduction(const float ArmorValue)
 {
-	// Boosted only while the shield is proportionally ahead of health, so it spends itself to rebalance the bars.
-	const float BalanceBoost = ShieldFraction / FMath::Max(HealthFraction, UE_KINDA_SMALL_NUMBER);
-	return ShieldWear_DrainRatio * FMath::Clamp(BalanceBoost, 1.f, ShieldBalance_MaxBoost);
+	const float ClampedArmor = FMath::Max(ArmorValue, 0.f);
+	return ClampedArmor / (ClampedArmor + ArmorForHalfReduction);
 }
 
-float UMKHAttributeSet::CalculateShieldWearFactor(const float ShieldFraction)
+float UMKHAttributeSet::GetArmorDamageReduction() const
 {
-	return 1.f + ShieldWear_DegradationPenalty * (1.f - FMath::Clamp(ShieldFraction, 0.f, 1.f));
-}
-
-void UMKHAttributeSet::CalculateDamageSplit(const float Damage, float& OutHealthDamage, float& OutShieldDamage) const
-{
-	const float MaxShieldValue = GetMaxShield();
-	const float MaxHealthValue = GetMaxHealth();
-	const float CurrentShield = GetShield();
-
-	OutShieldDamage = 0.f;
-	OutHealthDamage = FMath::Max(0.f, Damage);
-
-	// No pool to spend (or uninitialised attributes): the hit lands entirely on Health.
-	if (CurrentShield <= 0.f || MaxShieldValue <= 0.f || MaxHealthValue <= 0.f)
-	{
-		return;
-	}
-
-	const float ShieldFraction = CurrentShield / MaxShieldValue;
-	const float DrainRatio = CalculateShieldDrainRatio(ShieldFraction, GetHealth() / MaxHealthValue);
-	const float WearFactor = CalculateShieldWearFactor(ShieldFraction);
-
-	// Split so that, as a fraction of their own pool, the shield drains exactly DrainRatio times faster than Health.
-	const float ShieldWeight = DrainRatio * MaxShieldValue;
-	const float AbsorbedDamage = OutHealthDamage * ShieldWeight / (WearFactor * MaxHealthValue + ShieldWeight);
-
-	OutShieldDamage = FMath::Clamp(WearFactor * AbsorbedDamage, 0.f, CurrentShield);
-	OutHealthDamage = FMath::Max(0.f, OutHealthDamage - AbsorbedDamage);
-}
-
-float UMKHAttributeSet::GetShieldDamageReduction() const
-{
-	float HealthDamage = 0.f;
-	float ShieldDamage = 0.f;
-	CalculateDamageSplit(1.f, HealthDamage, ShieldDamage);
-
-	return 1.f - HealthDamage;
+	return CalculateArmorDamageReduction(GetArmor());
 }
 
 void UMKHAttributeSet::HandleIncomingDamage(const FGameplayEffectModCallbackData& Data)
@@ -274,25 +219,8 @@ void UMKHAttributeSet::HandleIncomingDamage(const FGameplayEffectModCallbackData
 		return;
 	}
 
-	const float CurrentShield = GetShield();
-
-	if (CurrentShield > 0.f)
-	{
-		// A hit far above the remaining pool shatters it instead of chipping it.
-		if (LocalDamage >= CurrentShield * ShieldBreak_DamageMultiplier)
-		{
-			ApplyShieldBreak(ASC, LocalDamage, CurrentShield);
-		}
-		else
-		{
-			ApplyShieldDamageMitigation(ASC, LocalDamage);
-		}
-	}
-	else
-	{
-		// No shield: all damage goes directly to Health
-		ASC->ApplyModToAttribute(GetHealthAttribute(), EGameplayModOp::Additive, -LocalDamage);
-	}
+	// Armor mitigation already happened in UExecCalc_Damage: the whole hit lands on Health.
+	ASC->ApplyModToAttribute(GetHealthAttribute(), EGameplayModOp::Additive, -FMath::RoundToFloat(LocalDamage));
 
 	// Post-damage side effects: hit notifications and on-hit status effects.
 	SendCombatEvent(ASC, MKHGameplayTags::Event::HitReceived, EventData);
@@ -332,8 +260,8 @@ void UMKHAttributeSet::ApplyStatusEffectsFromContext(const FGameplayEffectContex
 	// Target-facing effects land on the hit target; self on-hit effects land back on the
 	// attacker. Both run after the damage pipeline, so a self on-hit buff (e.g. Empower)
 	// never affects the damage of the hit that triggered it.
-	UMKHAbilitySystemLibrary::ApplyStatusEffects(SourceASC, TargetASC, MKHContext->GetTargetStatusEffects(), ContextHandle);
-	UMKHAbilitySystemLibrary::ApplyStatusEffects(SourceASC, SourceASC, MKHContext->GetSelfOnHitStatusEffects(), ContextHandle);
+	UMKHAbilitySystemLibrary::ApplyStatusEffects(SourceASC, TargetASC, MKHContext->GetTargetStatusEffectsContainer(), ContextHandle);
+	UMKHAbilitySystemLibrary::ApplyStatusEffects(SourceASC, SourceASC, MKHContext->GetSelfOnHitStatusEffectsContainer(), ContextHandle);
 }
 
 void UMKHAttributeSet::TrySendDeathEvent(UAbilitySystemComponent* ASC)
@@ -357,6 +285,15 @@ void UMKHAttributeSet::TrySendDeathEvent(UAbilitySystemComponent* ASC)
 	// Zero health before the class defaults have run means the character was never alive yet.
 	if (!bHasBeenAlive || bOutOfHealth || ASC->HasMatchingGameplayTag(MKHGameplayTags::State::Movement::Dead))
 	{
+		return;
+	}
+
+	if (ASC->HasMatchingGameplayTag(MKHGameplayTags::State::Unkillable))
+	{
+		FGameplayEventData LethalPayload;
+		LethalPayload.EventTag = MKHGameplayTags::Event::LethalHitPrevented;
+		LethalPayload.Instigator = Avatar;
+		ASC->HandleGameplayEvent(MKHGameplayTags::Event::LethalHitPrevented, &LethalPayload);
 		return;
 	}
 
@@ -407,43 +344,9 @@ void UMKHAttributeSet::HandleIncomingStaminaDamage(const FGameplayEffectModCallb
 	}
 }
 
-void UMKHAttributeSet::ApplyShieldBreak(UAbilitySystemComponent* ASC, const float Damage, const float CurrentShield) const
+void UMKHAttributeSet::OnRep_Armor(const FGameplayAttributeData& OldArmor)
 {
-	if (!IsValid(ASC)) return;
-
-	// The armor still mitigates the blow that lands on it, then the whole pool shatters.
-	float HealthDamage = 0.f;
-	float ShieldDamage = 0.f;
-	CalculateDamageSplit(Damage, HealthDamage, ShieldDamage);
-
-	ASC->ApplyModToAttribute(GetShieldAttribute(), EGameplayModOp::Additive, -CurrentShield);
-
-	if (HealthDamage > 0.f)
-	{
-		ASC->ApplyModToAttribute(GetHealthAttribute(), EGameplayModOp::Additive, -FMath::RoundToFloat(HealthDamage));
-	}
-}
-
-void UMKHAttributeSet::ApplyShieldDamageMitigation(UAbilitySystemComponent* ASC, const float Damage) const
-{
-	if (!IsValid(ASC)) return;
-
-	float HealthDamage = 0.f;
-	float ShieldDamage = 0.f;
-	CalculateDamageSplit(Damage, HealthDamage, ShieldDamage);
-
-	ASC->ApplyModToAttribute(GetShieldAttribute(), EGameplayModOp::Additive, -FMath::RoundToFloat(ShieldDamage));
-	ASC->ApplyModToAttribute(GetHealthAttribute(), EGameplayModOp::Additive, -FMath::RoundToFloat(HealthDamage));
-}
-
-void UMKHAttributeSet::OnRep_Shield(const FGameplayAttributeData& OldShield)
-{
-	GAMEPLAYATTRIBUTE_REPNOTIFY(UMKHAttributeSet, Shield, OldShield);
-}
-
-void UMKHAttributeSet::OnRep_MaxShield(const FGameplayAttributeData& OldMaxShield)
-{
-	GAMEPLAYATTRIBUTE_REPNOTIFY(UMKHAttributeSet, MaxShield, OldMaxShield);
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UMKHAttributeSet, Armor, OldArmor);
 }
 
 void UMKHAttributeSet::OnRep_Health(const FGameplayAttributeData& OldHealth)

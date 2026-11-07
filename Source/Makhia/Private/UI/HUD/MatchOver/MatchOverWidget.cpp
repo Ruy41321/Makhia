@@ -30,6 +30,9 @@ void UMatchOverWidget::ShowMatchResult(bool bLocalPlayerWon, bool bIsDraw)
 {
 	SetMatchResult(bLocalPlayerWon, bIsDraw);
 
+	const UMKHGameInstance* GameInstance = UMKHGameInstance::GetMKHGameInstance(this);
+	bOffersNextChallenge = bLocalPlayerWon && !bIsDraw && IsValid(GameInstance) && GameInstance->CanStartNextCareerLevel();
+
 	// The ballot opens with the match-over phase, so subscribing here is early enough to catch
 	// every vote, including one cast by the opponent before this panel was built.
 	BindRematchBallot();
@@ -58,6 +61,15 @@ void UMatchOverWidget::UnbindAllEventsFromDelegates()
 
 void UMatchOverWidget::RequestRematch()
 {
+	if (bOffersNextChallenge)
+	{
+		if (UMKHGameInstance* GameInstance = UMKHGameInstance::GetMKHGameInstance(this))
+		{
+			GameInstance->StartNextCareerLevel();
+		}
+		return;
+	}
+
 	// The game mode already ignores duplicate votes; skipping here just saves the round trip.
 	if (bLocalRematchVoteCast)
 	{
@@ -91,7 +103,8 @@ void UMatchOverWidget::ReturnToLobby()
 		return;
 	}
 
-	GameInstance->BackToLobby(true);
+	// Hosts the new lobby only when logged in: after an offline match the lobby reopens offline.
+	GameInstance->LeaveToNewLobby();
 }
 
 // ============================================================
@@ -102,6 +115,12 @@ void UMatchOverWidget::HandleRematchVotesChanged(int32 CurrentVotes, int32 Requi
 {
 	if (!IsValid(Txt_Rematch))
 	{
+		return;
+	}
+
+	if (bOffersNextChallenge)
+	{
+		Txt_Rematch->SetText(LOCTEXT("NextChallenge", "NEXT CHALLENGE"));
 		return;
 	}
 

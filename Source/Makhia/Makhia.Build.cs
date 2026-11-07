@@ -11,17 +11,14 @@ public class Makhia : ModuleRules
 		PublicDependencyModuleNames.AddRange(new string[] {
 			"Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput",
 			"GameplayAbilities", "GameplayTasks", "GameplayTags", "NetCore",
-			"OnlineSubsystemEIK", "OnlineSubsystem", "OnlineSubsystemUtils", "DeveloperSettings"
+			"OnlineSubsystem", "OnlineSubsystemUtils", "DeveloperSettings", 
+			"AIModule", "StateTreeModule", "GameplayStateTreeModule", "PhysicsCore"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "AnimGraphRuntime", "AudioModulation", "UMG", "Slate", "SlateCore" });
-
-		// Uncomment if you are using Slate UI
-		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
-		
-		// Uncomment if you are using online features
-		// PrivateDependencyModuleNames.Add("OnlineSubsystem");
-
-		// To include OnlineSubsystemSteam, add it to the plugins section in your uproject file with the Enabled attribute set to true
+		PrivateDependencyModuleNames.AddRange(new string[] {
+			"AnimGraphRuntime", "AudioModulation", "UMG", "Slate", "SlateCore",
+			"MoviePlayer", "NavigationSystem", "LevelSequence", "MovieScene", 
+			"CoreOnline", "AudioMixer", "AudioMixerCore", "SignalProcessing", "AudioCaptureCore", "Voice"
+		});
 	}
 }

@@ -6,15 +6,17 @@
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "AbilitySystem/MKHAbilityGrantPayload.h"
+#include "AbilitySystem/MKHAbilityTuning.h"
 #include "AbilitySystem/MKHAbilityTypes.h"
 #include "AbilitySystem/MKHGameplayTags.h"
 #include "Equipment/Weapon/MKHWeaponBase.h"
 #include "Equipment/EquipmentTypes.h"
-#include "Player/MKHPlayerCharacter.h"
+#include "Character/CharacterBase.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "AbilitySystem/Abilities/MKHMeleeAbility.h"
 #include "Libraries/MKHAbilitySystemLibrary.h"
 #include "Data/GenericClassReference.h"
+#include "Data/MKHDataSubsystem.h"
 #include "GameInstance/MKHGameInstance.h"
 #include "Player/PlayerController/MKHPlayerController.h"
 
@@ -24,6 +26,9 @@
 
 /** Fallback stamina damage dealt to a blocking target when an attack has no per-attack data. */
 static constexpr float DefaultStaminaDamageOnBlock = 20.f;
+
+/** Tuning used by an ability without a row: one neutral strike and the row's default reach. */
+static const FMKHAbilityTuningRow DefaultAbilityTuning;
 
 UMKHDamageAbility::UMKHDamageAbility()
 {
@@ -68,13 +73,15 @@ void UMKHDamageAbility::OnGiveAbility(const FGameplayAbilityActorInfo* ActorInfo
 {
 	Super::OnGiveAbility(ActorInfo, Spec);
 
+	// Balancing data on every machine (the AbilityTag replicates with the spec).
+	ResolveAbilityTuning(ActorInfo, Spec);
+
 	// This instance already starts from the CDO defaults (InstancedPerActor). The per-grant
 	// payload set by GrantEquipmentAbility overrides them with this weapon's rolled data.
 	if (const UMKHAbilityGrantPayload* Payload = GetGrantPayload(Spec))
 	{
-		SetAttacksData(Payload->AttacksData);
 		SetIsSkillAbility(Payload->bIsSkillAbility);
-		SetCooldownData(Payload->CooldownTime, Payload->CooldownTags);
+		SetCooldownTags(Payload->CooldownTags);
 	}
 
 	AssignBPClasses(ActorInfo);
@@ -95,6 +102,7 @@ void UMKHDamageAbility::ApplyCooldown(const FGameplayAbilitySpecHandle Handle,
 		return;
 	}
 	
+	const float CooldownTime = GetAbilityTuning().CooldownTime;
 	if (IsValid(CooldownEffect) && CooldownTime > 0.f)
 	{
 		const FGameplayEffectSpecHandle SpecHandle = MakeOutgoingGameplayEffectSpec(CooldownEffect, GetAbilityLevel());
@@ -151,14 +159,15 @@ void UMKHDamageAbility::CaptureDamageEffectInfo(AActor* TargetActor, FDamageEffe
 		return;
 	}
 
+	const TArray<FAttackData>& AttacksData = GetAttacks();
 	const bool bHasAttackData = AttacksData.IsValidIndex(ComboHitCounter);
 
 	OutInfo.AvatarActor = AvatarActorFromInfo;
 	OutInfo.DamageMultiplier = GetAttackDamageMultiplier();
 	OutInfo.StaminaDamage = bHasAttackData ? AttacksData[ComboHitCounter].StaminaDamageValue : DefaultStaminaDamageOnBlock;
 	OutInfo.DamageEffect = DamageEffect;
-	OutInfo.TargetStatusEffects = bHasAttackData ? AttacksData[ComboHitCounter].TargetStatusEffects : TArray<FStatusEffectData>();
-	OutInfo.SelfOnHitStatusEffects = bHasAttackData ? AttacksData[ComboHitCounter].SelfOnHitStatusEffects : TArray<FStatusEffectData>();
+	OutInfo.TargetStatusEffectsContainer = bHasAttackData ? AttacksData[ComboHitCounter].TargetStatusEffectsContainer : FGameplayTagContainer();
+	OutInfo.SelfOnHitStatusEffectsContainer = bHasAttackData ? AttacksData[ComboHitCounter].SelfOnHitStatusEffectsContainer : FGameplayTagContainer();
 	OutInfo.SourceASC = GetAbilitySystemComponentFromActorInfo();
 	
 	if (IsValid(TargetActor) && TargetActor->Implements<UAbilitySystemInterface>())
@@ -167,15 +176,17 @@ void UMKHDamageAbility::CaptureDamageEffectInfo(AActor* TargetActor, FDamageEffe
 	}
 }
 
-void UMKHDamageAbility::SetAttacksData(const TArray<FAttackData>& InAttacksData)
+void UMKHDamageAbility::SetCooldownTags(const FGameplayTagContainer& InCooldownTagContainer)
 {
-	AttacksData = InAttacksData;
+	CooldownTagContainer = InCooldownTagContainer;
 }
 
-void UMKHDamageAbility::SetCooldownData(float InCooldownTime, const FGameplayTagContainer& InCooldownTagContainer)
+const FMKHAbilityTuningRow& UMKHDamageAbility::GetAbilityTuning() const
 {
-	CooldownTime = FMath::Max(0.f, InCooldownTime);
-	CooldownTagContainer = InCooldownTagContainer;
+	// Looked up on use, never cached: a table edited in the editor applies from the next strike.
+	const UMKHDataSubsystem* Data = DataSubsystem.Get();
+	const FMKHAbilityTuningRow* Tuning = IsValid(Data) ? Data->FindAbilityTuning(TuningTag) : nullptr;
+	return Tuning != nullptr ? *Tuning : DefaultAbilityTuning;
 }
 
 void UMKHDamageAbility::SetIsSkillAbility(bool InIsSkillAbility)
@@ -231,8 +242,14 @@ AMKHWeaponBase* UMKHDamageAbility::InitOwningWeapon()
 	return OwningWeapon;
 }
 
+const TArray<FAttackData>& UMKHDamageAbility::GetAttacks() const
+{
+	return GetAbilityTuning().Attacks;
+}
+
 float UMKHDamageAbility::GetAttackDamageMultiplier() const
 {
+	const TArray<FAttackData>& AttacksData = GetAttacks();
 	if (ComboHitCounter >= AttacksData.Num())
 	{
 		UE_LOG(LogMKHAbility, Warning, TEXT("ComboHitCounter %d exceeds AttacksData array size %d. Using neutral multiplier."), ComboHitCounter, AttacksData.Num());
@@ -249,12 +266,13 @@ void UMKHDamageAbility::FaceCharacterTowardsAttack()
 		return;
 	}
 
-	AMKHPlayerCharacter* Character = Cast<AMKHPlayerCharacter>(AvatarActor);
+	ACharacterBase* Character = Cast<ACharacterBase>(AvatarActor);
 	if (!IsValid(Character))
 	{
 		return;
 	}
 	
+	// For an AI the control rotation follows the controller's focus (SetFocus on the opponent).
 	const FRotator ControlRotation = Character->GetControlRotation();
 	const FRotator TargetRotation = FRotator(0.f, ControlRotation.Yaw, 0.f);
 	Character->SetActorRotation(TargetRotation);
@@ -288,6 +306,30 @@ void UMKHDamageAbility::AssignBPClasses(const FGameplayAbilityActorInfo* ActorIn
 	// Resolve the generic effect classes through their well-known named keys.
 	CooldownEffect = UGenericClassReference::GetGameplayEffectByName(ClassDataAsset, UGenericClassReference::SkillCooldownEffectKey);
 	DamageEffect = UGenericClassReference::GetGameplayEffectByName(ClassDataAsset, UGenericClassReference::DamageEffectKey);
+}
+
+void UMKHDamageAbility::ResolveAbilityTuning(const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilitySpec& Spec)
+{
+	TuningTag = FGameplayTag();
+	const AActor* Owner = ActorInfo != nullptr ? ActorInfo->OwnerActor.Get() : nullptr;
+	DataSubsystem = UMKHDataSubsystem::Get(Owner);
+	if (!DataSubsystem.IsValid())
+	{
+		return;
+	}
+
+	// The spec carries the input tag and the AbilityTag: the tuning tag is the one with a row.
+	for (const FGameplayTag& Tag : Spec.GetDynamicSpecSourceTags())
+	{
+		if (DataSubsystem->FindAbilityTuning(Tag) != nullptr)
+		{
+			TuningTag = Tag;
+			return;
+		}
+	}
+
+	UE_LOG(LogMKHAbility, Warning, TEXT("%s: no ability tuning row for spec tags [%s], using one neutral strike and the default reach."),
+		*GetNameSafe(this), *Spec.GetDynamicSpecSourceTags().ToStringSimple());
 }
 
 void UMKHDamageAbility::BindOnContinueComboEvents()
@@ -348,7 +390,7 @@ void UMKHDamageAbility::OnContinueComboEndReceived(FGameplayEventData Payload)
 
 void UMKHDamageAbility::SyncAuthoritativeComboCounter(int32 InComboIndex)
 {
-	const int32 MaxComboIndex = FMath::Max(AttacksData.Num() - 1, 0);
+	const int32 MaxComboIndex = FMath::Max(GetAttacks().Num() - 1, 0);
 	ComboHitCounter = FMath::Clamp(FMath::Max(ComboHitCounter, InComboIndex), 0, MaxComboIndex);
 
 	// Under latency the server may learn about a combo strike only when its hit arrives.
@@ -366,6 +408,7 @@ void UMKHDamageAbility::TryApplySelfActivationStatusEffects()
 	}
 
 	// One application per combo strike, no matter how many call sites reach it first.
+	const TArray<FAttackData>& AttacksData = GetAttacks();
 	if (LastSelfActivationComboIndex == ComboHitCounter || !AttacksData.IsValidIndex(ComboHitCounter))
 	{
 		return;
@@ -381,6 +424,6 @@ void UMKHDamageAbility::TryApplySelfActivationStatusEffects()
 	FGameplayEffectContextHandle ContextHandle = ASC->MakeEffectContext();
 	ContextHandle.AddSourceObject(GetAvatarActorFromActorInfo());
 
-	UMKHAbilitySystemLibrary::ApplyStatusEffects(ASC, ASC, AttacksData[ComboHitCounter].SelfActivationStatusEffects, ContextHandle);
+	UMKHAbilitySystemLibrary::ApplyStatusEffects(ASC, ASC, AttacksData[ComboHitCounter].SelfActivationStatusEffectsContainer, ContextHandle);
 }
 

@@ -9,3 +9,8 @@ void UMKHSystemWidget::SetWidgetController(UWidgetController* InWidgetController
 	WidgetController = InWidgetController;
 	OnWidgetControllerSet();
 }
+
+UWidgetController* UMKHSystemWidget::GetWidgetController() const
+{
+	return WidgetController;
+}

@@ -6,6 +6,7 @@
 #include "Components/ActorComponent.h"
 #include "GameplayTagContainer.h"
 #include "Equipment/EquipmentTypes.h"
+#include "Inventory/MKHItemEntry.h"
 #include "Net/Serialization/FastArraySerializer.h"
 #include "EquipmentManagerComponent.generated.h"
 
@@ -13,42 +14,37 @@ class UEquipmentManagerComponent;
 class UEquipmentDefinition;
 class UEquipmentInstance;
 class UMKHAbilitySystemComponent;
-class UInventoryItem;
 
+/** One equipped item: the item identity plus the state that only exists while it is equipped. */
 USTRUCT(BlueprintType)
 struct FRPGEquipmentEntry : public FFastArraySerializerItem
 {
 	GENERATED_BODY()
 
-	/** Unique gameplay tag of the equipped item. */
+	/** Identity of the equipped item; its ItemID is preserved across equip/unequip cycles. */
 	UPROPERTY(BlueprintReadOnly)
-	FGameplayTag EntryTag = FGameplayTag();
+	FMKHItemEntry Item = FMKHItemEntry();
 
 	/** Equipment slot occupied by this entry (for example weapon or armor). */
 	UPROPERTY(BlueprintReadOnly)
 	FGameplayTag SlotTag = FGameplayTag();
-	
-	/** Item rarity used by UI and gameplay systems. */
-	UPROPERTY(BlueprintReadOnly)
-	FGameplayTag RarityTag = FGameplayTag();
-
-	/** Package of effects and abilities granted while the item is equipped. */
-	UPROPERTY(BlueprintReadOnly)
-	FEquipmentEffectPackage EffectPackage = FEquipmentEffectPackage();
-
-	/** Original ItemID assigned when the item was first created in the inventory. Preserved across equip/unequip cycles. */
-	UPROPERTY(BlueprintReadOnly)
-	int64 OriginalItemID = 0;
 
 	/** Runtime handles granted by GAS for clean removal during unequip. */
 	UPROPERTY(NotReplicated)
 	FEquipmentGrantedHandles GrantedHandles = FEquipmentGrantedHandles();
 
 	/** Returns whether this entry contains stat effects to apply. */
-	bool HasStats() const { return !EffectPackage.StatEffects.IsEmpty(); }
+	bool HasStats() const { return !Item.EffectPackage.StatEffects.IsEmpty(); }
 
 	/** Returns whether this entry contains abilities to grant. */
-	bool HasAbility() const { return !EffectPackage.Abilities.IsEmpty(); }
+	bool HasAbility() const { return !Item.EffectPackage.Abilities.IsEmpty(); }
+
+	/**
+	 * Base Armor granted by this entry's definition (UEquipmentDefinition::BaseArmorGiven), independent of rolls.
+	 *
+	 * @return The base armor, 0 for non-armor items or when the definition is missing.
+	 */
+	float GetBaseArmor() const;
 
 private:
 
@@ -94,12 +90,12 @@ struct FRPGEquipmentList : public FFastArraySerializer
 	/** Removes the entry currently occupying the provided slot. */
 	void RemoveEntryBySlot(const FGameplayTag& SlotTag);
 
-	/** Finds a mutable entry by original ItemID and slot. */
-	FRPGEquipmentEntry* FindEntryMutable(int64 OriginalItemID, const FGameplayTag& SlotTag);
-	/** Finds a const entry by original ItemID and slot. */
-	const FRPGEquipmentEntry* FindEntry(int64 OriginalItemID, const FGameplayTag& SlotTag) const;
-	/** Finds a const entry by original ItemID. */
-	const FRPGEquipmentEntry* FindEntryByItemID(int64 OriginalItemID) const;
+	/** Finds a mutable entry by ItemID and slot. */
+	FRPGEquipmentEntry* FindEntryMutable(int64 ItemID, const FGameplayTag& SlotTag);
+	/** Finds a const entry by ItemID and slot. */
+	const FRPGEquipmentEntry* FindEntry(int64 ItemID, const FGameplayTag& SlotTag) const;
+	/** Finds a const entry by ItemID. */
+	const FRPGEquipmentEntry* FindEntryByItemID(int64 ItemID) const;
 	/** Finds a const entry by slot. */
 	const FRPGEquipmentEntry* FindEntryBySlot(const FGameplayTag& SlotTag) const;
 	/** Finds a mutable entry by slot. */
@@ -152,62 +148,132 @@ struct TStructOpsTypeTraits<FRPGEquipmentList> : public TStructOpsTypeTraitsBase
 	};
 };
 
+/**
+ * Replicated equipment of a player, owned by the PlayerController.
+ * Equipping is server only and always goes through UInventoryComponent::UseItem, which validates the item.
+ */
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class MAKHIA_API UEquipmentManagerComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
-public:	
+public:
+
+	// ============================================================
+	// Lifecycle (Constructor, BeginPlay, Tick, EndPlay, etc.)
+	// ============================================================
+
 	/** Equipment manager component constructor. */
 	UEquipmentManagerComponent();
 
-	/** Replicated equipment state backed by FastArraySerializer. */
-	UPROPERTY(replicated)
-	FRPGEquipmentList EquipmentList;
+	/** Registers the component replicated properties. */
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	// ============================================================
+	// Public Interface  (BlueprintCallable / externally-facing API)
+	// ============================================================
+
+	/**
+	 * Server only: equips an item, replacing whatever occupies its slot.
+	 * The equipment definition is resolved from the item definition; calls without authority are ignored.
+	 *
+	 * @param Item The item to equip (its ItemID is kept by the equipment entry).
+	 */
+	void EquipItem(const FMKHItemEntry& Item);
+
+	/**
+	 * Returns whether a skill of an equipped weapon's two slots is running. False when the weapon is not in hand.
+	 *
+	 * @param ItemID   Weapon.
+	 * @param Package  Abilities of the weapon.
+	 * @param FromSlot First skill slot.
+	 * @param ToSlot   Second skill slot.
+	 */
+	bool IsItemSkillActive(int64 ItemID, const FEquipmentEffectPackage& Package, const FGameplayTag& FromSlot, const FGameplayTag& ToSlot) const;
+
+	/**
+	 * Server: when the item is equipped, copies its skill slots to the equipped copy and to the granted skills.
+	 *
+	 * @param Item The item, with its new skill slots.
+	 */
+	void ApplyItemSkillLayout(const FMKHItemEntry& Item);
+
+	/** Unequips by ItemID by resolving its target slot. */
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Operations")
+	void UnEquipItemByItemID(int64 ItemID);
+
+	/** Unequips the entry currently in the given slot. */
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Operations")
+	void UnEquipItem(const FGameplayTag& SlotTag);
+
+	/** Returns the slot associated with an ItemID, or EmptyTag when missing. */
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Queries")
+	const FGameplayTag& GetSlotTagByItemID(int64 ItemID) const;
+
+	/** Returns the equipment instance associated with the slot, if any. */
+	UEquipmentInstance* GetEquipmentInstanceBySlot(const FGameplayTag& SlotTag) const;
+
+	/** Returns the equipment entry associated with the slot, if any. */
+	FRPGEquipmentEntry* GetEquipmentEntryBySlot(const FGameplayTag& SlotTag) const;
+
+	/** Hide or Show the Spawned Actor by the weapon Instance. */
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Operations")
+	void HideEquippedWeaponMesh(const bool bHide = true) const;
 
 	/** Debug utility that prints equipped entries on screen. */
 	UFUNCTION(BlueprintCallable, Category = "Equipment|Debug")
 	void PrintEquipmentList() const;
 
-	/** Registers the component replicated properties. */
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-
-	/** Equips an entry, forwarding to server when called by a client. */
-	void EquipItem(const FRPGEquipmentEntry& InEntry);
-
-	/** Builds a replication-safe FRPGEquipmentEntry from a UInventoryItem. */
-	static FRPGEquipmentEntry BuildEquipmentEntry(const UInventoryItem* InventoryItem);
-	
-	/** Unequips by original ItemID by resolving its target slot. */
-	UFUNCTION(BlueprintCallable, Category = "Equipment|Operations")
-	void UnEquipItemByItemID(int64 ItemID);
-	
-	/** Unequips the entry currently in the given slot. */
-	UFUNCTION(BlueprintCallable, Category = "Equipment|Operations")
-	void UnEquipItem(const FGameplayTag& SlotTag);
-		
-	/** Returns the slot associated with an ItemID, or EmptyTag when missing. */
-	UFUNCTION(BlueprintCallable, Category = "Equipment|Queries")
-	const FGameplayTag& GetSlotTagByItemID(int64 ItemID) const;
-	
-	/** Returns the equipment instance associated with the slot, if any. */
-	UEquipmentInstance* GetEquipmentInstanceBySlot(const FGameplayTag& SlotTag) const;
-	
-	/** Returns the equipment entry associated with the slot, if any. */
-	FRPGEquipmentEntry* GetEquipmentEntryBySlot(const FGameplayTag& SlotTag) const;
-	
-	/** Hide or Show the Spawned Actor by the weapon Instance. */
-	UFUNCTION(BlueprintCallable)
-	void HideEquippedWeaponMesh(const bool bHide = true) const;
+	/**
+	 * Turns the Event.Weapon.Sheathed / Unsheathed events off while a loadout is rebuilt (not a gesture of the
+	 * character, so no sound), and back on. Calls nest: each false needs its true.
+	 *
+	 * @param bEnabled  False to stop sending them, true to undo one false.
+	 */
+	void SetWeaponEventsEnabled(const bool bEnabled) { WeaponEventsMuteCount = FMath::Max(0, WeaponEventsMuteCount + (bEnabled ? -1 : 1)); }
 
 private:
 
-	/** Reliable server RPC for equip requests coming from clients. */
-	UFUNCTION(Server, Reliable)
-	void ServerEquipItem(FRPGEquipmentEntry InEntry);
+	// ============================================================
+	// Protected / Internal Logic
+	// ============================================================
+
+	/**
+	 * Builds a replication-safe equipment entry from an item, resolving its equipment definition
+	 * class through UMKHDataSubsystem. The slot is resolved later by FRPGEquipmentList::AddEntry.
+	 *
+	 * @param Item     The item to equip.
+	 * @param OutEntry Entry filled with the item and its equipment definition.
+	 * @return False when the item has no equipment definition.
+	 */
+	bool BuildEquipmentEntry(const FMKHItemEntry& Item, FRPGEquipmentEntry& OutEntry) const;
+
+	/** Ability system of the owner, or nullptr. */
+	UMKHAbilitySystemComponent* FindOwnerAbilitySystem() const;
+
+	/**
+	 * Sends a gameplay event to the owner's ability system (server), e.g. Event.Weapon.Sheathed for the sound effects.
+	 *
+	 * @param EventTag  Event to send.
+	 */
+	void SendOwnerEvent(const FGameplayTag& EventTag) const;
 
 	/** Reliable server RPC for unequip requests coming from clients. */
 	UFUNCTION(Server, Reliable)
 	void ServerUnEquipItem(FGameplayTag SlotTag);
-		
+
+public:
+
+	// ============================================================
+	// Properties
+	// ============================================================
+
+	/** Replicated equipment state backed by FastArraySerializer. */
+	UPROPERTY(replicated)
+	FRPGEquipmentList EquipmentList;
+
+private:
+	/** Above zero while a loadout is rebuilt: weapon changes send no sheathe / unsheathe event. */
+	int32 WeaponEventsMuteCount = 0;
+
 };

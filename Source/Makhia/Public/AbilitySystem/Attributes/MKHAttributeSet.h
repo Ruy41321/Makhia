@@ -14,7 +14,7 @@
 	GAMEPLAYATTRIBUTE_VALUE_INITTER(PropertyName)
 
 /**
- * Core attribute set containing character stats (Health, Stamina, Shield)
+ * Core attribute set containing character stats (Health, Stamina, Armor)
  * and combat related attributes.
  */
 UCLASS()
@@ -54,27 +54,34 @@ public:
 	ATTRIBUTE_ACCESSORS(UMKHAttributeSet, MaxHealth)
 
 	// -------------------------------------------------------------------
-	// Shield Attributes
+	// Armor Attributes
 	// -------------------------------------------------------------------
 
-	/** Current Shield of the character */
-	UPROPERTY(BlueprintReadOnly, Category = "Attributes|Shield", ReplicatedUsing = OnRep_Shield)
-	FGameplayAttributeData Shield;
-	ATTRIBUTE_ACCESSORS(UMKHAttributeSet, Shield)
-
-	/** Maximum Shield of the character */
-	UPROPERTY(BlueprintReadOnly, Category = "Attributes|Shield", ReplicatedUsing = OnRep_MaxShield)
-	FGameplayAttributeData MaxShield;
-	ATTRIBUTE_ACCESSORS(UMKHAttributeSet, MaxShield)
+	/**
+	 * Armor rating granted by the equipped armor pieces (base value + rolled bonuses). Never consumed by hits:
+	 * it permanently reduces the damage reaching Health, see Documentation/ArmorMitigation.md.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes|Armor", ReplicatedUsing = OnRep_Armor)
+	FGameplayAttributeData Armor;
+	ATTRIBUTE_ACCESSORS(UMKHAttributeSet, Armor)
 
 	/**
-	 * Fraction of an incoming hit the Shield would currently keep away from Health, for HUD/tooltips
-	 * ("Armor: 67%"). Depends on the current Health/Shield state, see Documentation/ShieldDamageScaling.md.
+	 * Fraction of an incoming hit the current Armor keeps away from Health, for HUD/tooltips ("Armor: 50%").
 	 *
 	 * @return Damage reduction in [0, 1).
 	 */
-	UFUNCTION(BlueprintPure, Category = "Attributes|Shield")
-	float GetShieldDamageReduction() const;
+	UFUNCTION(BlueprintPure, Category = "Attributes|Armor")
+	float GetArmorDamageReduction() const;
+
+	/**
+	 * Damage reduction granted by an armor rating: Armor / (Armor + ArmorForHalfReduction).
+	 * Single source of the formula, shared by UExecCalc_Damage and the UI.
+	 *
+	 * @param ArmorValue  Armor rating, negative values count as 0.
+	 * @return            Damage reduction in [0, 1).
+	 */
+	UFUNCTION(BlueprintPure, Category = "Attributes|Armor")
+	static float CalculateArmorDamageReduction(float ArmorValue);
 
 	// -------------------------------------------------------------------
 	// Stamina Attributes
@@ -99,7 +106,7 @@ public:
 	// Combat Attributes
 	// -------------------------------------------------------------------
 
-	/** Chance to score a critical hit (0.0 - 100.0) */
+	/** Chance to score a critical hit (0 - 1) */
 	UPROPERTY(BlueprintReadOnly, Category = "Attributes|Combat", ReplicatedUsing = OnRep_CritChance)
 	FGameplayAttributeData CritChance;
 	ATTRIBUTE_ACCESSORS(UMKHAttributeSet, CritChance);
@@ -192,7 +199,7 @@ private:
 	bool bHasBeenAlive = false;
 
 	/**
-	 * Clamps clampable attributes (Health, Stamina, Shield) to their [0, Max] range.
+	 * Clamps clampable attributes (Health, Stamina, Armor, buffs) to their valid range.
 	 * Shared by PreAttributeChange (CurrentValue) and PreAttributeBaseChange (BaseValue)
 	 * so both the transient and the persistent value respect the same bounds.
 	 *
@@ -202,7 +209,7 @@ private:
 	void ClampAttribute(const FGameplayAttribute& Attribute, float& NewValue) const;
 
 	/**
-	 * Processes the incoming damage attribute, applying it to shields and health.
+	 * Processes the incoming damage attribute (already mitigated by Armor in UExecCalc_Damage) and applies it to Health.
 	 * @param Data Gameplay Effect callback data containing the damage modification.
 	 */
 	void HandleIncomingDamage(const FGameplayEffectModCallbackData& Data);
@@ -233,37 +240,6 @@ private:
 	 */
 	void TrySendDeathEvent(UAbilitySystemComponent* ASC);
 
-	/**
-	 * Splits an incoming hit between Health and the Shield pool, so that the two bars drain at a
-	 * fixed ratio of their own maximum and the shield always empties first, whatever the state.
-	 *
-	 * The algorithm, its invariants and the balance tables live in Documentation/ShieldDamageScaling.md.
-	 *
-	 * @param Damage           Raw incoming damage.
-	 * @param OutHealthDamage  Unrounded damage to subtract from Health.
-	 * @param OutShieldDamage  Unrounded damage to subtract from Shield, never above the remaining pool.
-	 */
-	void CalculateDamageSplit(float Damage, float& OutHealthDamage, float& OutShieldDamage) const;
-
-	/**
-	 * How many times faster the shield spends its pool than Health, in percentage of their own maximum.
-	 * Rises above the base ratio when the shield is proportionally healthier, to rebalance the two bars.
-	 *
-	 * @param ShieldFraction  Current Shield / MaxShield.
-	 * @param HealthFraction  Current Health / MaxHealth.
-	 * @return                Drain ratio, at least ShieldWear_DrainRatio.
-	 */
-	static float CalculateShieldDrainRatio(float ShieldFraction, float HealthFraction);
-
-	/**
-	 * Pool cost per point of absorbed damage: a battered shield turns its remaining points into
-	 * protection less efficiently, which makes the mitigation decay as the pool empties.
-	 *
-	 * @param ShieldFraction  Current Shield / MaxShield.
-	 * @return                Wear factor in [1, 1 + ShieldWear_DegradationPenalty].
-	 */
-	static float CalculateShieldWearFactor(float ShieldFraction);
-
 	/** Scales a current attribute proportionally when its associated max attribute changes. */
 	void AdjustAttributeForMaxChange(
 		const FGameplayAttribute& AffectedAttribute,
@@ -273,24 +249,12 @@ private:
 	/**
 	 * Clamps both the base and current value of an attribute to [0, NewMaxValue].
 	 * Used for buff/debuff attributes when their cap changes: unlike vital stats
-	 * (Health/Stamina/Shield) they are not scaled proportionally, only re-clamped.
+	 * (Health/Stamina) they are not scaled proportionally, only re-clamped.
 	 */
 	static void ClampAttributeDataToMax(FGameplayAttributeData& AttributeData, float NewMaxValue);
 
-	/** Applies a normally mitigated hit, splitting it between Health and the Shield pool. */
-	void ApplyShieldDamageMitigation(UAbilitySystemComponent* ASC, float Damage) const;
-
-	/**
-	 * Applies a shield break: the hit is still mitigated by the armor that was in place,
-	 * then the whole pool shatters, leaving the character unprotected for the next hits.
-	 */
-	void ApplyShieldBreak(UAbilitySystemComponent* ASC, float Damage, float CurrentShield) const;
-
 	UFUNCTION()
-	void OnRep_Shield(const FGameplayAttributeData& OldShield);
-
-	UFUNCTION()
-	void OnRep_MaxShield(const FGameplayAttributeData& OldMaxShield);
+	void OnRep_Armor(const FGameplayAttributeData& OldArmor);
 
 	UFUNCTION()
 	void OnRep_Health(const FGameplayAttributeData& OldHealth);

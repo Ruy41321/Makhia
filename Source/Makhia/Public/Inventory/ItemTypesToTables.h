@@ -8,7 +8,8 @@
 #include "ItemTypesToTables.generated.h"
 
 /**
- * 
+ * Item definition tables grouped by item category, plus the player-facing name of each category.
+ * Referenced once by UMKHDataSettings and read through UMKHDataSubsystem.
  */
 UCLASS()
 class MAKHIA_API UItemTypesToTables : public UDataAsset
@@ -16,9 +17,19 @@ class MAKHIA_API UItemTypesToTables : public UDataAsset
 	GENERATED_BODY()
 
 public:
+	// ============================================================
+	// Properties
+	// ============================================================
 
-	/* Map used in the engine to create a DataAsset to store Item Tables */
+	/** Item category tag -> DataTable of FMasterItemDefinition rows for that category. */
 	UPROPERTY(EditDefaultsOnly)
 	TMap<FGameplayTag, TObjectPtr<UDataTable>> TagsToTables;
-	
+
+	/**
+	 * Localized category name shown in the UI (tooltips, pickups), keyed by item tag.
+	 * An item uses the entry of its closest parent tag (e.g. Item.Equipment.Weapon.Hatchet);
+	 * items without a matching entry show no category.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Display")
+	TMap<FGameplayTag, FText> CategoryNames;
 };

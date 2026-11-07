@@ -100,6 +100,56 @@ const FRarityDefinition* UEquipmentRollLibrary::GetRarityByTag(const UDataTable*
 	return nullptr;
 }
 
+const FRarityDefinition* UEquipmentRollLibrary::RollRarityAmong(const UDataTable* RarityTable, const FGameplayTagContainer& AllowedRarities)
+{
+	if (!RarityTable || AllowedRarities.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	TArray<FRarityDefinition*> Rows;
+	RarityTable->GetAllRows<FRarityDefinition>(TEXT("RollRarityAmong"), Rows);
+
+	TArray<const FRarityDefinition*> Candidates;
+	TArray<float> CandidateWeights;
+	for (const FRarityDefinition* Row : Rows)
+	{
+		if (Row && AllowedRarities.HasTagExact(Row->RarityTag))
+		{
+			Candidates.Add(Row);
+			CandidateWeights.Add(Row->RollProbability);
+		}
+	}
+
+	int32 SelectedIndex = WeightedRandomSelect(CandidateWeights);
+	if (SelectedIndex == INDEX_NONE && !Candidates.IsEmpty())
+	{
+		// Every allowed rarity weighs 0 (e.g. a rarity never rolled naturally): pick one uniformly.
+		SelectedIndex = FMath::RandRange(0, Candidates.Num() - 1);
+	}
+
+	return Candidates.IsValidIndex(SelectedIndex) ? Candidates[SelectedIndex] : nullptr;
+}
+
+const FRarityDefinition* UEquipmentRollLibrary::RollRarityWeighted(const UDataTable* RarityTable, const TMap<FGameplayTag, float>& Weights)
+{
+	TArray<const FRarityDefinition*> Candidates;
+	TArray<float> CandidateWeights;
+
+	for (const TPair<FGameplayTag, float>& Pair : Weights)
+	{
+		const FRarityDefinition* Rarity = Pair.Value > 0.f ? GetRarityByTag(RarityTable, Pair.Key) : nullptr;
+		if (Rarity)
+		{
+			Candidates.Add(Rarity);
+			CandidateWeights.Add(Pair.Value);
+		}
+	}
+
+	const int32 SelectedIndex = WeightedRandomSelect(CandidateWeights);
+	return Candidates.IsValidIndex(SelectedIndex) ? Candidates[SelectedIndex] : nullptr;
+}
+
 TArray<FEquipmentStatEffectDefinition> UEquipmentRollLibrary::RollPassiveStats(
 	const UEquipmentDefinition* EquipmentCDO,
 	const UEquipmentStatEffects* StatData,
@@ -146,7 +196,7 @@ TArray<FEquipmentStatEffectDefinition> UEquipmentRollLibrary::RollPassiveStats(
 		return Result;
 	}
 
-	// Roll exactly NumStats stats using weighted selection
+	// Roll up to NumStats distinct stats: each pick leaves the pool, so an item never gets the same perk twice.
 	for (int32 i = 0; i < NumStats; ++i)
 	{
 		const int32 SelectedIndex = WeightedRandomSelect(CandidateWeights);
@@ -156,16 +206,34 @@ TArray<FEquipmentStatEffectDefinition> UEquipmentRollLibrary::RollPassiveStats(
 		}
 
 		const FEquipmentStatEffectDefinition* Selected = CandidatePool[SelectedIndex];
-
-		FEquipmentStatEffectDefinition NewStat = *Selected;
-		NewStat.CurrentValue = Selected->bFractionalStat
-			? FMath::FRandRange(Selected->MinStatLevel, Selected->MaxStatLevel)
-			: static_cast<float>(FMath::TruncToInt(FMath::RandRange(Selected->MinStatLevel, Selected->MaxStatLevel)));
-
-		Result.Add(NewStat);
+		Result.Add(MakeRolledStat(*Selected));
+		RemoveStatCandidatesWithEffect(CandidatePool, CandidateWeights, Selected->EffectClass);
 	}
 
 	return Result;
+}
+
+FEquipmentStatEffectDefinition UEquipmentRollLibrary::MakeRolledStat(const FEquipmentStatEffectDefinition& Definition)
+{
+	FEquipmentStatEffectDefinition NewStat = Definition;
+	NewStat.CurrentValue = Definition.bFractionalStat
+		? FMath::FRandRange(Definition.MinStatLevel, Definition.MaxStatLevel)
+		: static_cast<float>(FMath::TruncToInt(FMath::RandRange(Definition.MinStatLevel, Definition.MaxStatLevel)));
+	return NewStat;
+}
+
+void UEquipmentRollLibrary::RemoveStatCandidatesWithEffect(TArray<const FEquipmentStatEffectDefinition*>& CandidatePool,
+	TArray<float>& CandidateWeights, const TSoftClassPtr<UGameplayEffect>& EffectClass)
+{
+	// Same effect = same perk, even when it comes from another row/tier (e.g. LowTier and HighTier ArmorUp).
+	for (int32 Index = CandidatePool.Num() - 1; Index >= 0; --Index)
+	{
+		if (CandidatePool[Index]->EffectClass == EffectClass)
+		{
+			CandidatePool.RemoveAtSwap(Index);
+			CandidateWeights.RemoveAtSwap(Index);
+		}
+	}
 }
 
 TArray<FEquipmentAbilityDefinition> UEquipmentRollLibrary::RollActiveAbilities(
@@ -214,7 +282,7 @@ TArray<FEquipmentAbilityDefinition> UEquipmentRollLibrary::RollActiveAbilities(
 		return Result;
 	}
 
-	// Roll exactly NumAbilities abilities using weighted selection
+	// Roll up to NumAbilities distinct abilities: each pick leaves the pool, so a weapon never gets one twice.
 	for (int32 i = 0; i < NumAbilities; ++i)
 	{
 		const int32 SelectedIndex = WeightedRandomSelect(CandidateWeights);
@@ -223,10 +291,26 @@ TArray<FEquipmentAbilityDefinition> UEquipmentRollLibrary::RollActiveAbilities(
 			break;
 		}
 
-		Result.Add(*CandidatePool[SelectedIndex]);
+		const FEquipmentAbilityDefinition* Selected = CandidatePool[SelectedIndex];
+		Result.Add(*Selected);
+		RemoveAbilityCandidatesWithClass(CandidatePool, CandidateWeights, Selected->AbilityClass);
 	}
 
 	return Result;
+}
+
+void UEquipmentRollLibrary::RemoveAbilityCandidatesWithClass(TArray<const FEquipmentAbilityDefinition*>& CandidatePool,
+	TArray<float>& CandidateWeights, const TSoftClassPtr<UGameplayAbility>& AbilityClass)
+{
+	// Same ability class = same ability, even when it comes from another row.
+	for (int32 Index = CandidatePool.Num() - 1; Index >= 0; --Index)
+	{
+		if (CandidatePool[Index]->AbilityClass == AbilityClass)
+		{
+			CandidatePool.RemoveAtSwap(Index);
+			CandidateWeights.RemoveAtSwap(Index);
+		}
+	}
 }
 
 TArray<FEquipmentAbilityDefinition> UEquipmentRollLibrary::ResolveAbilitiesByTags(

@@ -151,26 +151,6 @@ private:
 	float ServerLifetimeFailsafeDuration = 10.f;
 
 	// ==========================================
-	// Directional Magnetic Targeting (DMT)
-	// ==========================================
-
-	/** If true, magnetic targeting will automatically align the player to enemies when attacking */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"), Category = "DMT")
-	bool bEnableDMT = true;
-
-	/** Radius of the sphere trace used for targeting */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true", EditCondition = "bEnableDMT", EditConditionHides), Category = "DMT")
-	float DMTRadius = 300.f;
-
-	/** Maximum angle from the camera forward vector for a valid target */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true", EditCondition = "bEnableDMT", EditConditionHides), Category = "DMT")
-	float DMTMaxAngle = 35.f;
-
-	/** The expected stopping distance from the target */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true", EditCondition = "bEnableDMT", EditConditionHides), Category = "DMT")
-	float AttackRange = 150.f;
-
-	// ==========================================
 	// Hit Scan Window (locally-controlled machine)
 	// ==========================================
 

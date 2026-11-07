@@ -15,22 +15,22 @@ FMKHGameplayEffectContext* FMKHGameplayEffectContext::GetEffectContext(FGameplay
 }
 
 /** Serializes a status effect array with an explicit element count, shared by both context lists. */
-static void NetSerializeStatusEffectArray(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess, TArray<FStatusEffectData>& StatusEffects)
-{
-	// Safe and clean manual array serialization for custom contexts
-	uint8 NumEffects = StatusEffects.Num();
-	Ar << NumEffects;
-
-	if (Ar.IsLoading())
-	{
-		StatusEffects.SetNumZeroed(NumEffects);
-	}
-
-	for (uint8 i = 0; i < NumEffects; ++i)
-	{
-		StatusEffects[i].NetSerialize(Ar, Map, bOutSuccess);
-	}
-}
+// static void NetSerializeStatusEffectArray(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess, TArray<FStatusEffectData>& StatusEffects)
+// {
+// 	// Safe and clean manual array serialization for custom contexts
+// 	uint8 NumEffects = StatusEffects.Num();
+// 	Ar << NumEffects;
+//
+// 	if (Ar.IsLoading())
+// 	{
+// 		StatusEffects.SetNumZeroed(NumEffects);
+// 	}
+//
+// 	for (uint8 i = 0; i < NumEffects; ++i)
+// 	{
+// 		StatusEffects[i].NetSerialize(Ar, Map, bOutSuccess);
+// 	}
+// }
 
 bool FMKHGameplayEffectContext::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess)
 {
@@ -69,11 +69,11 @@ bool FMKHGameplayEffectContext::NetSerialize(FArchive& Ar, UPackageMap* Map, boo
 		{
 			RepBits |= 1 << 7;
 		}
-		if (TargetStatusEffects.Num() > 0)
+		if (TargetStatusEffectsContainer.Num() > 0)
 		{
 			RepBits |= 1 << 8;
 		}
-		if (SelfOnHitStatusEffects.Num() > 0)
+		if (SelfOnHitStatusEffectsContainer.Num() > 0)
 		{
 			RepBits |= 1 << 9;
 		}
@@ -127,11 +127,11 @@ bool FMKHGameplayEffectContext::NetSerialize(FArchive& Ar, UPackageMap* Map, boo
 	}
 	if (RepBits & 1 << 8)
 	{
-		NetSerializeStatusEffectArray(Ar, Map, bOutSuccess, TargetStatusEffects);
+		TargetStatusEffectsContainer.NetSerialize(Ar, Map, bOutSuccess);
 	}
 	if (RepBits & 1 << 9)
 	{
-		NetSerializeStatusEffectArray(Ar, Map, bOutSuccess, SelfOnHitStatusEffects);
+		SelfOnHitStatusEffectsContainer.NetSerialize(Ar, Map, bOutSuccess);
 	}
 
 	if (Ar.IsLoading())

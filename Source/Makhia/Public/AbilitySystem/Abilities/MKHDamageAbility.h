@@ -8,19 +8,23 @@
 #include "MKHDamageAbility.generated.h"
 
 struct FAttackData;
+struct FMKHAbilityTuningRow;
 class AMKHWeaponBase;
 class UMKHAbilityGrantPayload;
+class UMKHDataSubsystem;
 
 /**
  * Base class for damage-dealing abilities (basic attacks and skills).
  *
  * Provides:
- * - Per-attack damage data (AttacksData) and damage capture into FDamageEffectInfo.
+ * - Per-attack damage data (the tuning row's Attacks) and damage capture into FDamageEffectInfo.
  * - Combo support driven by animation notifies (ContinueComboStart/End events).
- * - Skill support with a dynamic set-by-caller cooldown (CooldownTime + CooldownTags).
+ * - Skill support with a dynamic set-by-caller cooldown (tuning CooldownTime + CooldownTags).
  * - Owning weapon resolution from the actors attached to the avatar.
  *
- * Per-grant data (attack data, skill flag, cooldown) is injected at grant time through
+ * Balancing data (strikes, cooldown time, reach) is read from the ability tuning table by the
+ * AbilityTag found in the spec's dynamic source tags, on every machine (Documentation/AbilityTuning.md).
+ * Per-grant data (skill flag, cooldown tags) is injected at grant time through
  * UMKHAbilityGrantPayload — never configured by mutating the class CDO.
  */
 UCLASS()
@@ -87,17 +91,21 @@ public:
 	void CaptureDamageEffectInfo(AActor* TargetActor, FDamageEffectInfo& OutInfo);
 
 	/**
-	 * Sets the AttacksData for this ability.
-	 * @param InAttacksData The AttackData to set for this ability.
-	 */
-	void SetAttacksData(const TArray<FAttackData>& InAttacksData);
-	
-	/**
-	 * Set the cooldown data relatives to the specific ability.
-	 * @param InCooldownTime Time to activate the skill again
+	 * Set the cooldown tags relatives to the specific ability (the duration comes from the tuning row).
 	 * @param InCooldownTagContainer Tags to grant when on CD
 	 */
-	void SetCooldownData(float InCooldownTime, const FGameplayTagContainer& InCooldownTagContainer);
+	void SetCooldownTags(const FGameplayTagContainer& InCooldownTagContainer);
+
+	/**
+	 * Balancing and AI data of this ability, from the ability tuning table.
+	 *
+	 * @return The tuning row of TuningTag, or a default row (neutral strike, default reach) when it has none.
+	 */
+	const FMKHAbilityTuningRow& GetAbilityTuning() const;
+
+	/** @return The AbilityTag identifying this ability's tuning row; invalid until granted or without a row. */
+	UFUNCTION(BlueprintPure, Category = "Damage Ability | Tuning")
+	FGameplayTag GetTuningTag() const { return TuningTag; }
 
 	/**
 	 * Set if this ability is a skill
@@ -125,6 +133,16 @@ public:
 	void OnComboTriggered(int32 HitCounter);
 	virtual void OnComboTriggered_Implementation(int32 HitCounter);
 
+	/**
+	 * Returns the current sequential hit index of the active combo.
+	 *
+	 * @return The zero-based combo strike index.
+	 */
+	int32 GetComboHitCounter() const { return ComboHitCounter; }
+
+	/** @return True while a press chains the next combo strike (between the ContinueCombo Start and End notifies). */
+	bool IsWithinComboWindow() const { return bIsWithinComboWindow; }
+
 protected:
 
 	/**
@@ -137,13 +155,6 @@ protected:
 	/** Adjusts character transform dynamically to face towards an expected target location or look angle. */
 	UFUNCTION(BlueprintCallable, Category = "Damage Ability | Movement")
 	void FaceCharacterTowardsAttack();
-
-	/**
-	 * Returns the current sequential hit index of the active combo.
-	 *
-	 * @return The zero-based combo strike index.
-	 */
-	int32 GetComboHitCounter() const { return ComboHitCounter; }
 
 	/**
 	 * Aligns the combo counter with an authoritative combo index received from the
@@ -190,9 +201,8 @@ protected:
 	 */
 	void TryApplySelfActivationStatusEffects();
 
-	/** Struct containing the Damage and Status effects applied by each attack of this ability. */
-	UPROPERTY(BlueprintReadOnly, meta = (AllowPrivateAccess = "true"), Category = "Damage Ability | Damage")
-	TArray<FAttackData> AttacksData;
+	/** @return The damage and status effects of each strike of this ability (the tuning row's Attacks). */
+	const TArray<FAttackData>& GetAttacks() const;
 
 	/** Last combo strike index whose SelfActivationStatusEffects were applied (authority-side dedup). */
 	int32 LastSelfActivationComboIndex = INDEX_NONE;
@@ -219,13 +229,25 @@ private:
 	UPROPERTY(BlueprintReadOnly, meta = (AllowPrivateAccess = "true"), Category = "Damage Ability | Cooldown")
 	FGameplayTagContainer CooldownTagContainer = FGameplayTagContainer();
 	
-	/** The duration of the cooldown in seconds. */
-	UPROPERTY(BlueprintReadOnly, meta = (AllowPrivateAccess = "true"), Category = "Damage Ability | Cooldown")
-	float CooldownTime = 0.f;
-				
+	/** AbilityTag of this ability's row in the ability tuning table, found in the spec's dynamic source tags. */
+	UPROPERTY(BlueprintReadOnly, meta = (AllowPrivateAccess = "true"), Category = "Damage Ability | Tuning")
+	FGameplayTag TuningTag;
+
+	/** Data subsystem holding the ability tuning table, cached when the ability is granted. */
+	TWeakObjectPtr<const UMKHDataSubsystem> DataSubsystem;
+
 	/** Retrieve and assign needed BP Classes from a Data Asset*/
 	void AssignBPClasses(const FGameplayAbilityActorInfo* ActorInfo);
-	
+
+	/**
+	 * Finds this ability's tuning row: the spec's dynamic source tag that has a row in the ability tuning table
+	 * (the AbilityTag added by GrantEquipmentAbility; replicated, so it works on clients too).
+	 *
+	 * @param ActorInfo  Actor info of the grant, used to reach the data subsystem.
+	 * @param Spec       Spec being granted.
+	 */
+	void ResolveAbilityTuning(const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilitySpec& Spec);
+
 	/** Indicates whether this melee ability supports combo sequences. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"), Category = "Melee Ability | Core Settings")
 	bool bIsComboAbility = false;

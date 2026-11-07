@@ -26,6 +26,9 @@ public:
 	/**
 	 * Called by the engine when the connection to the server is lost or a travel fails.
 	 * Returns to the lobby as host so the player re-creates their own lobby on arrival.
+	 * When the failing driver is our own listen socket the lobby is reopened offline instead:
+	 * hosting again would fail the same way and loop.
+	 * Ignored while a return to the lobby is already in progress (the engine repeats the failure every tick).
 	 * Does not call Super: the base implementation would browse to the default map and
 	 * race with the travel started here.
 	 *

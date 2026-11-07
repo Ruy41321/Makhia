@@ -41,16 +41,16 @@ struct FMKHGameplayEffectContext : public FGameplayEffectContext
 	void SetIsDodged(bool bInIsDodged) { bDodged = bInIsDodged; }
 
 	/** Retrieves the status effects to apply to the hit target on a successful hit. */
-	const TArray<FStatusEffectData>& GetTargetStatusEffects() const { return TargetStatusEffects; }
+	const FGameplayTagContainer& GetTargetStatusEffectsContainer() const { return TargetStatusEffectsContainer; }
 
 	/** Stores the status effects to apply to the hit target on a successful hit. */
-	void SetTargetStatusEffects(const TArray<FStatusEffectData>& InStatusEffects) { TargetStatusEffects = InStatusEffects; }
+	void SetTargetStatusEffectsContainer(const FGameplayTagContainer& InStatusEffectsContainer) { TargetStatusEffectsContainer = InStatusEffectsContainer; }
 
 	/** Retrieves the status effects to apply back to the attacker on a successful hit. */
-	const TArray<FStatusEffectData>& GetSelfOnHitStatusEffects() const { return SelfOnHitStatusEffects; }
+	const FGameplayTagContainer& GetSelfOnHitStatusEffectsContainer() const { return SelfOnHitStatusEffectsContainer; }
 
 	/** Stores the status effects to apply back to the attacker on a successful hit. */
-	void SetSelfOnHitStatusEffects(const TArray<FStatusEffectData>& InStatusEffects) { SelfOnHitStatusEffects = InStatusEffects; }
+	void SetSelfOnHitStatusEffectsContainer(const FGameplayTagContainer& InStatusEffectsContainer) { SelfOnHitStatusEffectsContainer = InStatusEffectsContainer; }
 
 	/** Safely resolves this custom context from a generic gameplay effect context handle. */
 	static MAKHIA_API
@@ -100,11 +100,11 @@ private:
 
 	/** Secondary gameplay effects applied to the hit target when the main effect results in a successful hit. */
 	UPROPERTY()
-	TArray<FStatusEffectData> TargetStatusEffects;
+	FGameplayTagContainer TargetStatusEffectsContainer;
 
 	/** Secondary gameplay effects applied back to the attacker when the main effect results in a successful hit. */
 	UPROPERTY()
-	TArray<FStatusEffectData> SelfOnHitStatusEffects;
+	FGameplayTagContainer SelfOnHitStatusEffectsContainer;
 
 };
 
@@ -243,11 +243,11 @@ struct FDamageEffectInfo
 		
 	/** Status effects applied to the hit target when the attack lands. */
 	UPROPERTY(BlueprintReadWrite)
-	TArray<FStatusEffectData> TargetStatusEffects;
+	FGameplayTagContainer TargetStatusEffectsContainer;
 
 	/** Status effects applied back to the attacker when the attack lands. */
 	UPROPERTY(BlueprintReadWrite)
-	TArray<FStatusEffectData> SelfOnHitStatusEffects;
+	FGameplayTagContainer SelfOnHitStatusEffectsContainer;
 
 	/** Source ability system component that applies the outgoing effect. */
 	UPROPERTY(BlueprintReadWrite)

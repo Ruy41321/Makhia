@@ -50,7 +50,7 @@ if (CurrentDist3D > DMTTargetStopDistance)
 
 ## Configuration
 
-DMT settings are defined in `MKHMeleeAbility` and can be customized per ability to match specific animation requirements (e.g., a lunging stab vs. a stationary slash).
+DMT settings are balancing data: they live in each ability's row of `DT_AbilityTuning` (`FMKHAbilityTuningRow`, see `AbilityTuning.md`) and can be customized per ability to match specific animation requirements (e.g., a lunging stab vs. a stationary slash).
 
 | Property | Description |
 | :--- | :--- |
@@ -66,13 +66,14 @@ The task is typically triggered via `TryActivateDMT()` when a melee ability is a
 // From MKHMeleeAbility.cpp
 void UMKHMeleeAbility::TryActivateDMT()
 {
-    if (!bEnableDMT) return;
+    const FMKHAbilityTuningRow& Tuning = GetAbilityTuning();
+    if (!Tuning.bEnableDMT) return;
 
     UMKHAbilityTask_ApplyDMT* DMTTask = UMKHAbilityTask_ApplyDMT::ApplyDMT(
-        this, 
-        DMTRadius, 
-        DMTMaxAngle, 
-        AttackRange
+        this,
+        Tuning.DMTRadius,
+        Tuning.DMTMaxAngle,
+        Tuning.AttackRange
     );
 
     if (DMTTask)

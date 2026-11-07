@@ -14,6 +14,12 @@ The system utilizes priority tags to determine interruption eligibility. These t
 ### Dynamic Cancellability
 Through the `AN_MakeAbilityCancellable` Anim Notify, an active ability can voluntarily remove its priority tag from the ASC. This makes the character vulnerable to interruption by any incoming ability (regardless of priority), which is essential for "canceling" recovery animations into new actions.
 
+### Dodge and Block
+- **`GA_Dodge`** (Priority 1) also has `GameplayAbility.Active.Priority` in its `ActivationBlockedTags`: any priority tag blocks it, so it cannot interrupt an attack before `AN_MakeAbilityCancellable`.
+- **`GA_Block`** has no priority tag: it starts at once and cancels basic attacks (`CancelAbilitiesWithTag` = `GameplayAbility.Type.Attacks.Basic`). A skill keeps running until its tag is removed; the movement state then enters Blocking, which cancels the running abilities (`UBlockingSystemComponent::ApplyBlockingStateModifiers`).
+
+The duel bot follows the same rules: see `DuelBotAI.md`, *Reactions and priority*.
+
 ---
 
 ## Technical Implementation

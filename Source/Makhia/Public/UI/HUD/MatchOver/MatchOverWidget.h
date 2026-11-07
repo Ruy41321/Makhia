@@ -19,6 +19,7 @@ DECLARE_MULTICAST_DELEGATE(FMatchOverDelegateSignature);
  *
  * Rematch is a ballot: pressing the button casts this player's vote and the match only restarts
  * once every participant has voted, which the game mode arbitrates. Return-to-lobby is unilateral.
+ * After a won career level with another level to play, the same button opens that level instead.
  */
 UCLASS()
 class MAKHIA_API UMatchOverWidget : public UMKHSystemWidget
@@ -64,14 +65,18 @@ public:
 
 protected:
 	/**
-	 * Casts this player's rematch vote. The match restarts only once every participant has voted.
+	 * Casts this player's rematch vote, or opens the next career level when the button offers it.
+	 * The match restarts only once every participant has voted.
 	 * Delegated to AMKHPlayerController::Server_RequestRematch because a UFUNCTION(Server) declared
 	 * on a UUserWidget never leaves the client (UUserWidget has no RPC callspace resolution).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MatchOver | Actions")
 	void RequestRematch();
 
-	/** Leaves the match and travels the owning player back to the lobby. */
+	/**
+	 * Leaves the match and travels the owning player back to a fresh lobby (UMKHGameInstance::LeaveToNewLobby):
+	 * as host when logged in, offline otherwise.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "MatchOver | Actions")
 	void ReturnToLobby();
 
@@ -119,4 +124,7 @@ protected:
 private:
 	/** True once this player has voted; keeps the label on "WAITING" and skips redundant RPCs. */
 	bool bLocalRematchVoteCast = false;
+
+	/** True when the rematch button opens the next career level (won level, another one to play). */
+	bool bOffersNextChallenge = false;
 };

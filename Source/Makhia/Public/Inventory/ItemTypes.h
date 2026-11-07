@@ -8,6 +8,7 @@
 #include "ItemTypes.generated.h"
 
 class UGameplayEffect;
+class UStaticMesh;
 
 USTRUCT(BlueprintType)
 struct FEquipmentItemProps
@@ -31,10 +32,12 @@ struct FConsumableProps
 	/** Level used when applying the consumable Gameplay Effect. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	float ItemEffectLevel = 1.f;
-	
+
+	/** Cooldown duration (seconds) applied to the user after consuming this item; 0 disables the cooldown. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	float CooldownTime = 0.f;
-	
+
+	/** Gameplay tag granted for CooldownTime while this consumable is on cooldown. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FGameplayTag CooldownTag = FGameplayTag();
 
@@ -54,12 +57,12 @@ struct FMasterItemDefinition : public FTableRowBase
 	FText ItemDescription = FText();
 
 	/**
-	 * Optional pre-defined rarity for this item.
-	 * When set, equipment entries skip the random rarity roll and use this tier directly;
-	 * when left empty, rarity is rolled from the rarity table as usual.
+	 * Rarities this item can be generated with. Empty: any rarity of the rarity table.
+	 * One tag forces that rarity; several restrict the roll to them, keeping the table's RollProbability weights
+	 * (list every rarity but one to exclude it). See UEquipmentRollLibrary::RollRarityAmong.
 	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	FGameplayTag RarityTag = FGameplayTag();
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (Categories = "Item.Rarity"))
+	FGameplayTagContainer RarityTags = FGameplayTagContainer();
 
 	/** Current stack quantity of the item instance. */
 	UPROPERTY(BlueprintReadOnly)
@@ -73,6 +76,10 @@ struct FMasterItemDefinition : public FTableRowBase
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	TObjectPtr<UTexture2D> Icon = nullptr;
 
+	/** Icon texture displayed for this item in the weapon HUD. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	TObjectPtr<UTexture2D> WeaponHudIcon = nullptr;
+
 	/** Consumable-specific configuration data for this item. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FConsumableProps ConsumableProps = FConsumableProps();
@@ -80,5 +87,13 @@ struct FMasterItemDefinition : public FTableRowBase
 	/** Equipment-specific configuration data for this item. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FEquipmentItemProps EquipmentItemProps = FEquipmentItemProps();
+
+	/** Static mesh shown by the world pickup actor when this item lies on the ground. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Pickup")
+	TSoftObjectPtr<UStaticMesh> PickupMesh = nullptr;
+
+	/** Per-item transform (offset, rotation, scale) composed on top of the pickup Blueprint mesh layout; identity keeps that layout. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Pickup")
+	FTransform PickupMeshTransform = FTransform::Identity;
 
 };

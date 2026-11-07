@@ -64,7 +64,12 @@ protected:
 	/** Updates character position to move towards the target. */
 	void UpdatePosition(ACharacter* Character, AActor* Target, float DeltaTime) const;
 
-	/** Retrieves the forward vector based on camera or actor rotation. */
+	/**
+	 * Retrieves the aiming direction: the camera for players, the control rotation (focus) for AI, else the actor forward.
+	 *
+	 * @param OutForwardVector  Normalized aiming direction.
+	 * @return False without a valid ability or pawn.
+	 */
 	bool GetTargetingForwardVector(FVector& OutForwardVector) const;
 
 	/** Performs a sphere trace to find potential targets. */

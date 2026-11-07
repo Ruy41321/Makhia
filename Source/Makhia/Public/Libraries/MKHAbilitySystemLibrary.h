@@ -7,11 +7,11 @@
 #include "GameplayTagContainer.h"
 #include "MKHAbilitySystemLibrary.generated.h"
 
-struct FRPGInventoryEntry;
+struct FMKHItemEntry;
 class UCharacterClassInfo;
 class UProjectileInfo;
 struct FDamageEffectInfo;
-struct FStatusEffectData;
+// struct FStatusEffectData;
 struct FGameplayEffectContextHandle;
 /**
  *
@@ -40,10 +40,10 @@ public:
 	 *
 	 * @param SourceASC      ASC that creates the outgoing specs (the effect instigator).
 	 * @param TargetASC      ASC receiving the effects (pass SourceASC for self-applied effects).
-	 * @param StatusEffects  Status effect entries to apply.
+	 * @param StatusEffectsContainer  Status effect entries to apply.
 	 * @param ContextHandle  Effect context forwarded to the specs (crit flag, source object, ...).
 	 */
-	static void ApplyStatusEffects(UAbilitySystemComponent* SourceASC, UAbilitySystemComponent* TargetASC, const TArray<FStatusEffectData>& StatusEffects, const FGameplayEffectContextHandle& ContextHandle);
+	static void ApplyStatusEffects(UAbilitySystemComponent* SourceASC, UAbilitySystemComponent* TargetASC, const FGameplayTagContainer& StatusEffectsContainer, const FGameplayEffectContextHandle& ContextHandle);
 
 	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Set Loose Tag Count Static"))
 	static void K2_SetLooseTagCountStatic(UAbilitySystemComponent* ASC, FGameplayTag Tag, int32 NewCount);
@@ -51,7 +51,22 @@ public:
 	template<typename T>
 	static T* GetDataTableRowByTag(const UDataTable* DataTable, const FGameplayTag& Tag);
 
-	static void AssignDynamicSkillInputTag(FRPGInventoryEntry& NewEntry);
+	/**
+	 * Assigns the skill input tags (SkillSlot1..3), in order, to the skill abilities rolled on a weapon item.
+	 *
+	 * @param NewItem Item whose EffectPackage abilities receive the dynamic input tags.
+	 */
+	static void AssignDynamicSkillInputTag(FMKHItemEntry& NewItem);
+	
+	/** Returns a container with all the gameplay tag children of the every given tag in the container. 
+	 * @param ParentTagContainer The container of parent tags to retrieve children for.
+	 * @param ExcludingDepth The depth of children to not retrieve. E.g. a depth of 0 will return everything, a depth of 1 will return only the children of the parent tags.
+	 */
+	UFUNCTION(BlueprintPure, Category = "GameplayTags")
+	static FGameplayTagContainer GetGameplayTagChildren(const FGameplayTagContainer ParentTagContainer, int ExcludingDepth = 0);
+	
+	UFUNCTION(BlueprintPure, Category = "GameplayTags")
+	static FName GetGameplayTagLeafName(const FGameplayTag Tag);
 };
 
 template<typename T>

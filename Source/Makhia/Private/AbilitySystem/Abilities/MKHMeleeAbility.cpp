@@ -8,6 +8,7 @@
 #include "AbilitySystemGlobals.h"
 #include "Abilities/Tasks/AbilityTask_WaitDelay.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "AbilitySystem/MKHAbilityTuning.h"
 #include "AbilitySystem/MKHAbilityTypes.h"
 #include "AbilitySystem/MKHGameplayTags.h"
 #include "AbilitySystem/Tasks/MKHAbilityTask_ApplyDMT.h"
@@ -381,16 +382,18 @@ void UMKHMeleeAbility::OnComboTriggered_Implementation(int32 HitCounter)
 
 void UMKHMeleeAbility::TryActivateDMT()
 {
-	if (!bEnableDMT)
+	// DMT values are balancing data: they live in the ability tuning row (Documentation/AbilityTuning.md).
+	const FMKHAbilityTuningRow& Tuning = GetAbilityTuning();
+	if (!Tuning.bEnableDMT)
 	{
 		return;
 	}
 
 	UMKHAbilityTask_ApplyDMT* DMTTask = UMKHAbilityTask_ApplyDMT::ApplyDMT(
 		this,
-		DMTRadius,
-		DMTMaxAngle,
-		AttackRange
+		Tuning.DMTRadius,
+		Tuning.DMTMaxAngle,
+		Tuning.AttackRange
 	);
 
 	if (IsValid(DMTTask))

@@ -39,32 +39,11 @@ void UMKHSystemInputComponent::BindAbilityActions(UMKHInputConfig* InputConfig, 
 				{
 					FGameplayTag Tag = Action.InputTag;
 					BindActionValueLambda(Action.InputAction, ETriggerEvent::Triggered,
-						[Object, PressedFunc, ReleasedFunc, Tag](const FInputActionValue& Value)
+						[Object, PressedFunc, Tag](const FInputActionValue&)
 						{
-							if (Tag.MatchesTag(MKHGameplayTags::Input::Block))
-							{
-								// Custom bind for block action
-								
-								if (Value.Get<bool>())
-								{
-									(Object->*PressedFunc)(Tag);
-								}
-								else if (ReleasedFunc)
-								{
-									(Object->*ReleasedFunc)(Tag);
-								}
-								return;
-							}
-							// Default bind
 							(Object->*PressedFunc)(Tag);
 						});
 				}
-			}
-			
-			// Do not bind on complete for block action
-			if (Action.InputTag.MatchesTag(MKHGameplayTags::Input::Block))
-			{
-				continue;
 			}
 			
 			if constexpr (!std::is_same_v<ReleasedFuncType, std::nullptr_t>)

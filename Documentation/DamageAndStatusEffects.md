@@ -10,6 +10,7 @@
 6. [Where Damage Is Applied](#where-damage-is-applied)
 7. [Status Effects](#status-effects)
 8. [Special Outcomes: Block, Dodge, Death](#special-outcomes-block-dodge-death)
+   - [Back Attacks](#back-attacks)
 9. [Extending the System](#extending-the-system)
 
 ---
@@ -22,7 +23,7 @@ Damage in Makhia flows through three distinct stages, each with a single owner:
 |---|---|---|
 | **Definition** | Equipment data + `FAttackData` | Weapon base damage, per-attack multiplier, status effect lists |
 | **Computation** | `UExecCalc_Damage` | The full damage formula (buffs, crit, mitigation modifiers) — pure computation, no side effects |
-| **Application** | `UMKHAttributeSet::PostGameplayEffectExecute` | Shield/Health distribution, combat events, status effect application, death |
+| **Application** | `UMKHAttributeSet::PostGameplayEffectExecute` | Health reduction, combat events, status effect application, death |
 
 All buff/debuff values are **decimal fractions**: `0.3` means 30%.
 
@@ -35,7 +36,8 @@ Computed entirely in `UExecCalc_Damage::HandleIncomingDamage`, in this exact ord
 ```
 1. BaseDamage  = WeaponBaseDamage × (AttackMultiplier + AdditiveBaseDamage)
 2. Damage      = BaseDamage × (1 + (Empower − Weaken) + CritBonus)
-3. FinalDamage = Damage × (1 + (Exposed − Reinforced))
+3. Damage      = Damage × (1 + (Exposed − Reinforced))
+4. FinalDamage = Damage × (1 − Armor / (Armor + 100))
 ```
 
 Where:
@@ -44,8 +46,9 @@ Where:
 - **AttackMultiplier** — the specific attack's damage multiplier (`FAttackData::DamagePercent`, e.g. `1.5` for a heavy attack). Travels as the set-by-caller magnitude `Combat.Data.Damage`.
 - **AdditiveBaseDamage** — attacker buff, added to the attack multiplier so the weapon damage is scaled exactly once (`1.5 + 0.3 = 1.8`).
 - **Empower / Weaken** — attacker buff/debuff pair; only the net value matters.
-- **CritBonus** — `CritDamageMod` when the crit roll succeeds (`RandRange(1,100) <= CritChance × 100`), `0` otherwise. It stacks *additively* with net Empower in the same multiplication — this intentionally lets a crit push the offensive multiplier beyond the Empower cap.
+- **CritBonus** — `CritDamageMod` on a critical hit, `0` otherwise. The hit is critical when the roll succeeds (`RandRange(1,100) <= CritChance × 100`) **or** when it lands on the defender's back (see [Back Attacks](#back-attacks)). It stacks *additively* with net Empower in the same multiplication — this intentionally lets a crit push the offensive multiplier beyond the Empower cap.
 - **Exposed / Reinforced** — defender debuff/buff pair; only the net value matters, applied to the final (post-crit) damage.
+- **Armor** — defender's permanent armor rating from equipped pieces, never consumed; diminishing returns, 100 Armor halves the damage. See [ArmorMitigation.md](ArmorMitigation.md).
 
 Every intermediate result is clamped to be non-negative.
 
@@ -57,6 +60,7 @@ Weapon `500`, heavy attack `1.5`, attacker has AdditiveBaseDamage `0.3` and Empo
 1. 500 × (1.5 + 0.3)        = 900
 2. 900 × (1 + 0.2 + 0.5)    = 1530
 3. 1530 × (1 + (0 − 0.1))   = 1377
+4. 1377 × (1 − 50 / 150)    = 918     (defender wears only the chest: Armor 50)
 ```
 
 ---
@@ -78,7 +82,7 @@ Clamping to `[0, Max]` happens in `UMKHAttributeSet::ClampAttribute`, wired into
 **Capture semantics** (defined in `RPGDamageStatics`, `ExecCalc_Damage.cpp`):
 
 - Source attributes (`AdditiveBaseDamage`, `Empower`, `Weaken`, `CritChance`, `CritDamageMod`) are captured with **snapshot = true**: values are read when the damage spec is created, i.e. at hit time in `ApplyDamageEffect`. This is why self-activation buffs (applied at attack start) are included, and self on-hit buffs (applied after the damage pipeline) are not.
-- Target attributes (`Reinforced`, `Exposed`) are captured with **snapshot = false**: the defender's state at the moment the effect executes.
+- Target attributes (`Reinforced`, `Exposed`, `Armor`) are captured with **snapshot = false**: the defender's state at the moment the effect executes.
 
 ---
 
@@ -88,12 +92,12 @@ Clamping to `[0, Max]` happens in `UMKHAttributeSet::ClampAttribute`, wired into
 |---|---|---|
 | Weapon base damage | `FEquipmentDefinition::BaseDamage` (`Equipment/EquipmentDefinition.h`) | Authored per equipment definition |
 | → propagated to | `AMKHWeaponBase::WeaponDamage` via `UEquipmentInstance::ApplyWeaponDamageIfWeapon` | Set on the spawned weapon actor |
-| Attack multiplier | `FAttackData::DamagePercent` (`Equipment/EquipmentTypes.h`) | One entry per combo strike, rolled into `FEquipmentAbilityDefinition::AttacksData` |
+| Attack multiplier | `FAttackData::DamagePercent` (`AbilitySystem/MKHAbilityTuning.h`) | One entry per combo strike, in `FMKHAbilityTuningRow::Attacks` (`DT_AbilityTuning`, see `AbilityTuning.md`) |
 | Stamina damage (on block) | `FAttackData::StaminaDamageValue` | Consumed only when the target blocks |
 | Status effect lists | `FAttackData::TargetStatusEffects`, `SelfActivationStatusEffects`, `SelfOnHitStatusEffects` | See [Status Effects](#status-effects) |
 | Status effect entry | `FStatusEffectData` (`Equipment/EquipmentTypes.h`) | `EffectClass` + `EffectDuration` + `EffectValue` (decimal fraction) |
 
-The per-attack data reaches the ability through the equipment grant payload (`UMKHAbilityGrantPayload` → `UMKHDamageAbility::OnGiveAbility`).
+The per-attack data is read by the ability from its tuning row (`UMKHDamageAbility::GetAttacks`), found by the `AbilityTag` the grant adds to the spec's dynamic source tags.
 
 ### From definition to the damage effect
 
@@ -112,8 +116,10 @@ The per-attack data reaches the ability through the equipment grant payload (`UM
 | Weapon resolution | `GetEquippedWeapon` → `GetWeaponBaseDamage` | Resolves the attacker's equipped weapon through the equipment manager on its instigator controller (authority-only data; executions run on the server). No weapon → damage 0 + warning |
 | Formula step 1 | `ComputeBaseDamage` | `WeaponBaseDamage × (AttackMultiplier + AdditiveBaseDamage)` |
 | Dodge check | `IsAttackDodged` | Perfect dodge: flags the context, forwards the would-be damage as event magnitude only |
+| Back attack check | `IsBackAttack` | Attacker inside the defender's rear cone → the crit roll is skipped and the hit always crits |
 | Formula step 2 | `ApplyOffensiveModifiers` + `RollCriticalHitBonus` | `× (1 + (Empower − Weaken) + CritBonus)`; the crit roll also flags `bCriticalHit` on the context |
 | Formula step 3 | `ApplyDefensiveModifiers` | `× (1 + (Exposed − Reinforced))` |
+| Formula step 4 | `ApplyArmorMitigation` | `× (1 − UMKHAttributeSet::CalculateArmorDamageReduction(Armor))` |
 | Output | `AddOutputModifier` on `IncomingDamage` | Writes the result into the `IncomingDamage` **meta-attribute** (never displayed, consumed immediately by the attribute set) |
 
 The blocked path (`HandleStaminaDamage` + `RefineStaminaDamage`) bypasses the damage formula entirely and outputs `IncomingStaminaDamage`, reduced by the defender weapon's block stability.
@@ -127,11 +133,11 @@ The blocked path (`HandleStaminaDamage` + `RefineStaminaDamage`) bypasses the da
 - `HandleIncomingDamage`:
   1. Consumes and resets `IncomingDamage`.
   2. Dodged? → sends `Event.AttackDodged` to both actors, applies nothing, stops.
-  3. Shield present? → `ApplyShieldBreak` (damage ≥ shield × 2) or `ApplyShieldDamageMitigation`, both splitting the hit via `CalculateDamageSplit` — see [ShieldDamageScaling.md](ShieldDamageScaling.md); otherwise all damage goes to Health.
+  3. Subtracts the damage (already reduced by Armor in the exec calc, rounded) from Health — see [ArmorMitigation.md](ArmorMitigation.md).
   4. Side effects: `Event.HitReceived` / `Event.HitInflicted`, status effect application (see below), `TrySendDeathEvent`.
 - `HandleIncomingStaminaDamage`: blocked attacks — stamina reduction, `Event.BlockSuccessful`, `Event.GuardBreak` on depletion.
 
-Health/Stamina/Shield clamping on application is guaranteed by the same `ClampAttribute` hooks described above.
+Health/Stamina/Armor clamping on application is guaranteed by the same `ClampAttribute` hooks described above.
 
 ---
 
@@ -165,7 +171,7 @@ Self-applied effects simply pass the same ASC as source and target. Status effec
 |---|---|---|---|
 | `TargetStatusEffects` | `FMKHGameplayEffectContext::TargetStatusEffects` (replicated, `NetSerialize` bit 8) | `UMKHAttributeSet::ApplyStatusEffectsFromContext` → target ASC | End of `HandleIncomingDamage`, after damage |
 | `SelfOnHitStatusEffects` | `FMKHGameplayEffectContext::SelfOnHitStatusEffects` (replicated, `NetSerialize` bit 9) | `UMKHAttributeSet::ApplyStatusEffectsFromContext` → **source** ASC | Same point — after damage, so never part of the triggering hit |
-| `SelfActivationStatusEffects` | Not transported — read directly from `AttacksData` | `UMKHDamageAbility::TryApplySelfActivationStatusEffects` → own ASC | Attack start (see below) |
+| `SelfActivationStatusEffects` | Not transported — read directly from the tuning row's `Attacks` |`UMKHDamageAbility::TryApplySelfActivationStatusEffects` → own ASC | Attack start (see below) |
 
 `TryApplySelfActivationStatusEffects` runs on the authority only, at most once per combo strike (`LastSelfActivationComboIndex` dedup), from three call sites:
 
@@ -181,8 +187,20 @@ Self-applied effects simply pass the same ASC as source and target. Status effec
 |---|---|---|---|
 | **Block** (defender blocking + facing attacker) | `UExecCalc_Damage::IsAttackBlocked` | No health damage; stamina damage path instead | Target & self on-hit effects **not** applied |
 | **Perfect dodge** (defender in Dodging state) | `UExecCalc_Damage::IsAttackDodged` | No damage applied; `Event.AttackDodged` to both actors | Target & self on-hit effects **not** applied |
+| **Back attack** (attacker in the defender's rear cone) | `UExecCalc_Damage::IsBackAttack` | Guaranteed critical hit: `CritBonus = CritDamageMod`, no roll | Applied normally (it is a successful hit) |
 | **Death** (Health reaches 0) | `UMKHAttributeSet::TrySendDeathEvent` | `Event.Death` sent once (guarded by `State.Movement.Dead`) | — |
 | Any of the above | — | — | Self **activation** effects were already applied at attack start regardless |
+
+### Back Attacks
+
+Every hit landing on the defender's back is critical, with no chance roll involved.
+
+- **Geometry** — `ComputeDefenderFacingDot` is the single source of truth for the front/back relation: the dot product between the defender's forward vector and the direction from the defender to the attacker, both flattened on Z. `+1` = attacker right in front, `-1` = exactly behind. Both the block check and the back attack check read it, so they cannot disagree on where the attacker stands.
+- **Rear cone** — `BackAttackRearConeAngleDegrees` (`ExecCalc_Damage.cpp`, `120°`) is the total aperture: the attacker must be within 60° of the defender's backward vector, i.e. `dot ≤ -0.5`. Tuning it requires a recompile — the value deliberately lives next to the block threshold instead of in a data asset.
+- **Mutually exclusive with block** — the block check rejects the whole front half space (`dot > 0`) while the rear cone is `dot ≤ -0.5`, so a back attack can never be blocked, and the side band in between (`-0.5 < dot ≤ 0`) is neither blocked nor critical.
+- **Damage** — the back attack only forces `bCriticalHit`; the bonus itself stays the attacker's `CritDamageMod`. With `CritDamageMod = 0` a back attack deals normal damage and is merely flagged as critical for the UI.
+- **Authority** — resolved inside the execution calculation, so the server's view of the defender's rotation decides, exactly like the block check. `bCriticalHit` then replicates on the context (bit 7) and drives the floating damage text via `AMKHPlayerCharacter::OnHitInflicted`.
+- **Order** — evaluated after the dodge check, so a perfect dodge performed with the back turned is still a dodge and takes no damage.
 
 ---
 

@@ -14,6 +14,16 @@
  */
 DECLARE_DELEGATE_OneParam(FQuickSlotActivatedSignature, const FGameplayTag& /*QuickSlotTag*/);
 
+/**
+ * Broadcasts the weapon quick slot equipped by the unarmed-attack quick equip, on every change (local or replicated).
+ *
+ * @param QuickEquipWeaponSlotTag The new quick-equip weapon slot; invalid when no weapon is quick slotted.
+ */
+DECLARE_MULTICAST_DELEGATE_OneParam(FQuickEquipWeaponSlotChangedSignature, const FGameplayTag& /*QuickEquipWeaponSlotTag*/);
+
+/** Broadcasts that the quick slot bindings changed (local assignment or replicated update). */
+DECLARE_MULTICAST_DELEGATE(FQuickSlotsChangedSignature);
+
 class UInventoryComponent;
 
 /** Replicated quick-slot binding between a gameplay tag and an inventory item identifier. */
@@ -54,6 +64,12 @@ public:
 	/** Delegate invoked when a quick slot is activated through player input. */
 	FQuickSlotActivatedSignature QuickSlotActivatedDelegate;
 
+	/** Delegate invoked when QuickEquipWeaponSlotTag changes, locally or through replication. */
+	FQuickEquipWeaponSlotChangedSignature OnQuickEquipWeaponSlotChanged;
+
+	/** Delegate invoked when the quick slot bindings change, locally or through replication. */
+	FQuickSlotsChangedSignature OnQuickSlotsChanged;
+
 	/** Assigns an item to a quick slot tag and updates weapon quick-equip tracking when needed. */
 	void AddQuickSlot(const FGameplayTag& QuickSlotTag, int64 ItemID);
 
@@ -69,12 +85,31 @@ public:
 	int64 GetQuickSlotItemID(const FGameplayTag& QuickSlotTag) const;
 
 	/**
+	 * Returns whether an item is bound to any quick slot. On the server this is the mirror of every owner's
+	 * quick slots (the owning client assigns them and replicates the change), so it is the server's reference.
+	 *
+	 * @param ItemID Inventory item to look for.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Quick Slot")
+	bool IsItemQuickSlotted(int64 ItemID) const;
+
+	/**
+	 * Returns the quick slot an item is bound to.
+	 *
+	 * @param ItemID Inventory item to look for.
+	 * @return The quick slot tag, or an invalid tag when the item is not quick slotted.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Quick Slot")
+	FGameplayTag FindQuickSlotTagByItemID(int64 ItemID) const;
+
+	/**
 	 * Attempts to equip the last weapon quick slot used while skipping activation callbacks.
 	 *
 	 * @return True if a valid weapon quick slot was found and used.
 	 */
 	bool TryEquipWeapon();
 
+	/** Weapon quick slot equipped by the unarmed-attack quick equip; invalid when no weapon is quick slotted. */
 	FGameplayTag GetQuickEquipWeaponSlotTag() const {return QuickEquipWeaponSlotTag;}
 	
 protected:
@@ -124,6 +159,10 @@ protected:
 	UFUNCTION()
 	void OnRep_QuickSlotTagMap();
 
+	/** Called when the replicated quick-equip weapon slot changes on clients; broadcasts the change. */
+	UFUNCTION()
+	void OnRep_QuickEquipWeaponSlotTag();
+
 	/** Rebuilds the local quick-slot cache from the replicated entry list. */
 	void SyncQuickSlotMapFromEntries();
 
@@ -136,7 +175,7 @@ private:
 	// ============================================================
 
 	/** Stores the replicated quick slot tag used for fast weapon equip actions. */
-	UPROPERTY(Replicated)
+	UPROPERTY(ReplicatedUsing = OnRep_QuickEquipWeaponSlotTag)
 	FGameplayTag QuickEquipWeaponSlotTag;
 
 	/** Stores the replicated quick-slot bindings used to rebuild the local cache on remote peers. */

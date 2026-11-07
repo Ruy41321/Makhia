@@ -5,8 +5,8 @@
 1. [Overview](#overview)
 2. [Class Hierarchy](#class-hierarchy)
 3. [ACharacterBase](#acharacterbase)
-4. [AMKHPlayerCharacter](#AMKHPlayerCharacter)
-5. [AEnemyBase](#aenemybase)
+4. [AMKHPlayerCharacter](#amkhplayercharacter)
+5. [AEnemyBase and the Duel Bot](#aenemybase-and-the-duel-bot)
 6. [Movement Components](#movement-components)
 7. [Movement State Machine](#movement-state-machine)
 8. [Animation System](#animation-system)
@@ -21,10 +21,13 @@
 
 The Makhia character system uses a **component-based architecture** combined with a **finite state machine** for movement management and an **observer pattern** for state-change notifications. This design separates each movement ability into its own component, delegates state management to a dedicated state machine, and notifies dependent systems (such as animation) through delegates.
 
+The whole movement framework (components, state machine, states, anim instance) lives on **`ACharacterBase`**, so the player and the offline duel bot (`AMKHDuelBot`) use the same moves with the same rules. Only what is truly player-specific stays on `AMKHPlayerCharacter` (camera, Enhanced Input bindings, username, skin from the player state, ASC from the player state, floating damage text, spawn/view reset).
+
 Key principles:
 - **Single Responsibility**: Each component handles exactly one movement mechanic.
 - **Open/Closed**: New movement states can be added without modifying existing state classes.
 - **Decoupled Communication**: Systems react to state changes through delegates, not direct coupling.
+- **Same moves for every character**: components, states and abilities only depend on `ACharacterBase`; nothing in the movement framework includes `MKHPlayerCharacter.h`.
 - **Blueprint Accessibility**: All major properties and functions are exposed for designer iteration.
 
 ---
@@ -33,9 +36,10 @@ Key principles:
 
 ```
 ACharacter (Engine)
-  └─ ACharacterBase                  [IAbilitySystemInterface]
-       ├─ AMKHPlayerCharacter           [IMKHAbilitySystemInterface]
-       └─ AEnemyBase
+  └─ ACharacterBase                  [IAbilitySystemInterface]   movement framework, stamina, crowd control
+       ├─ AMKHPlayerCharacter        [IMKHDuelParticipant]       camera, input, ASC on AMKHPlayerState
+       └─ AEnemyBase                                             ASC on the actor (Minimal)
+            └─ AMKHDuelBot           [IMKHDuelParticipant]       offline duel opponent (AI)
 ```
 
 ---
@@ -44,13 +48,44 @@ ACharacter (Engine)
 
 **Location**: `Source/Makhia/Public/Character/CharacterBase.h`
 
-The abstract base class shared by players and enemies. It provides the GAS integration point and common attribute-change delegates.
+The base class shared by players and AI. It provides the GAS integration point, the stamina and crowd-control rules and the whole movement framework.
 
 ### Responsibilities
 
 - Implements `IAbilitySystemInterface::GetAbilitySystemComponent()`.
 - Declares virtual hooks for GAS initialisation: `InitAbilityActorInfo()`, `BindCallbacksToDependencies()`, `InitClassDefaults()`, `BroadcastInitialValues()`.
-- Manages the `OutOfStamina` gameplay tag in `HandleStaminaChanged()`.
+- `BindCallbacksToDependencies()` (rebind-safe) binds Health, **Stamina** (`HandleStaminaChanged()` manages the `OutOfStamina` tag and the regeneration, then `OnStaminaChanged`) and **crowd control**: `Stunned` / `Staggered` call `HandleCrowdControlTagChanged()`, which forces an uncrouch and interrupts a jump. Bot and player pay and suffer the same rules.
+- **Stamina regeneration** (server only, `UpdateStaminaRegen`, moved from `BP_MKHPlayerCharacter`'s graph in M8.1 so the bot regenerates too): any stamina spend removes the running regeneration (effects granting `State.General.Stamina.Recovery`) and restarts the `StaminaRegenDelay` timer (1 s); when it fires, `StaminaRegenEffectClass` (`GE_Status_StaminaRegen`, set on `BP_MKHPlayerCharacter` and `BP_DuelBot`) is applied unless the character blocks; full stamina removes it. The block holds it: `BP_BlockingSystemComp` removes it when a block starts and applies it again when the block ends.
+- Creates the movement components and the state machine in its constructor and exposes the movement API (below).
+- `Landed()` hands the landing to `JumpSystem->OnLanded()`.
+
+### Movement Components Created in Constructor
+
+The subobject names are the same for every subclass (and were the player's before the framework moved here), so Blueprint children keep their component overrides (input actions, speeds, component class overrides) by name.
+
+```cpp
+TObjectPtr<UDodgeSystemComponent> DodgeSystem;              // "Dodge System Component"
+TObjectPtr<UCrouchSystemComponent> CrouchSystem;            // "Crouch System Component"
+TObjectPtr<UBlockingSystemComponent> BlockingSystem;        // "Blocking System Component"
+TObjectPtr<UBasicMovementComponent> BasicMovementSystem;    // "Basic Movement Component"
+TObjectPtr<UJumpSystemComponent> JumpSystem;                // "Jump System Component"
+TObjectPtr<USprintSystemComponent> SprintSystem;            // "Sprint System Component"
+TObjectPtr<UMovementStateMachine> MovementStateMachine;     // "Movement State Machine"
+bool bIsHoldingWeapon;                                      // Replicated, switches the locomotion blendspace
+```
+
+`BP_MKHPlayerCharacter` replaces the class of "Blocking System Component" with `BP_BlockingSystemComp` (component class override: stamina regeneration paused while blocking). `BP_DuelBot` copies the player's non-input tuning (walk speed 100, run speed 400, sprint as default, `BlockAbilityClass` = `GA_Block`) and must use the same component class (set in the Blueprint editor: component class overrides are not reachable from Python/MCP).
+
+### Public Helpers
+
+| Method | Description |
+|---|---|
+| `SetMaxWalkSpeed(float)` | Sets `CharacterMovement->MaxWalkSpeed` and `MaxWalkSpeedCrouched` |
+| `GetCurrentMovementState()` / `GetPreviousMovementState()` | Read the state machine (None without one) |
+| `TransitionToMovementState(NewState, bForce)` | Calls `MovementStateMachine->TransitionToState()` on this machine |
+| `Multicast_TransitionToMovementState(NewState, bForce)` | Same on every machine (death, revive) |
+| `GetMovementStateMachine()` / `UnsubscribeFromMovementStateChanges()` | State machine access |
+| `Multicast_StopMontage(Montage, BlendOut)` | Stops one montage on every machine (cancelled abilities) |
 
 ### Key Properties
 
@@ -68,7 +103,6 @@ TObjectPtr<UMKHAttributeSet> MKHAttributeSet;
 |---|---|---|
 | `OnHealthChanged` | `(float OldHealth, float CurrentHealth, float MaxHealth)` | Health attribute changes |
 | `OnStaminaChanged` | `(float OldStamina, float CurrentStamina, float MaxStamina)` | Stamina attribute changes |
-| `OnShieldChanged` | `(float OldShield, float CurrentShield, float MaxShield)` | Shield attribute changes |
 
 ---
 
@@ -76,27 +110,14 @@ TObjectPtr<UMKHAttributeSet> MKHAttributeSet;
 
 **Location**: `Source/Makhia/Public/Player/MKHPlayerCharacter.h`
 
-The player-controlled character. It owns the movement components, state machine, and camera, and delegates GAS ownership to `AMKHPlayerState`.
+The player-controlled character. It owns the camera rig and the skin component, binds the Enhanced Input actions of the inherited movement components, and delegates GAS ownership to `AMKHPlayerState`.
 
 ### Components Created in Constructor
 
 ```cpp
-// Camera
 TObjectPtr<USpringArmComponent> CameraBoom;
 TObjectPtr<UCameraComponent> Camera;
-
-// Movement Systems
-TObjectPtr<UDodgeSystemComponent> DodgeSystem;
-TObjectPtr<UCrouchSystemComponent> CrouchSystem;
-TObjectPtr<UBasicMovementComponent> BasicMovementSystem;
-TObjectPtr<UJumpSystemComponent> JumpSystem;
-TObjectPtr<USprintSystemComponent> SprintSystem;
-
-// State Management
-TObjectPtr<UMovementStateMachine> MovementStateMachine;
-
-// Projectile spawn point for GAS abilities
-TObjectPtr<USceneComponent> DynamicProjectileSpawnPoint;
+TObjectPtr<UMKHSkinComponent> SkinComponent;
 ```
 
 ### GAS Initialisation
@@ -109,7 +130,7 @@ PossessedBy() [Server]
        ├─ ASC = PlayerState->GetMKHAbilitySystemComponent()
        ├─ AttributeSet = PlayerState->GetMKHAttributeSet()
        ├─ ASC->InitAbilityActorInfo(PlayerState, this)
-       ├─ BindCallbacksToDependencies()
+       ├─ BindCallbacksToDependencies()          (ACharacterBase: health, stamina, crowd control)
        ├─ MovementStateMachine->SyncCurrentStateTagToASC()
        └─ InitClassDefaults()  [Authority only]
 
@@ -117,27 +138,25 @@ OnRep_PlayerState() [Client]
   └─ InitAbilityActorInfo()   (same flow, minus InitClassDefaults)
 ```
 
+The state machine enters its first state in `BeginPlay`, before the player state's ASC is known, hence the tag sync.
+
 ### Input Setup
 
 `SetupPlayerInputComponent` casts to `UEnhancedInputComponent` and delegates binding to each movement component's `SetupInput` method.
 
-### Public Helpers
+### Round Reset
 
-| Method | Description |
-|---|---|
-| `SetMaxWalkSpeed(float)` | Sets `CharacterMovement->MaxWalkSpeed` |
-| `GetCurrentMovementState()` | Returns `MovementStateMachine->GetCurrentState()` |
-| `GetPreviousMovementState()` | Returns `MovementStateMachine->GetPreviousState()` |
-| `TransitionToMovementState(NewState, bForce)` | Calls `MovementStateMachine->TransitionToState()` |
-| `GetDynamicSpawnPoint_Implementation()` | Returns the `DynamicProjectileSpawnPoint` scene component |
+`ResetForNewRound` (server) multicasts `Multicast_ResetToSpawnTransform` and `Multicast_TransitionToMovementState(Idle, true)`, the only way out of Dead. Death itself is `GA_Die` → `Multicast_TransitionToMovementState(Dead, true)`.
+
+**Death presentation: no ragdoll.** Players and the duel bot never ragdoll: the Dead state of `ABP_MKHPlayerCharacter` plays the `A_Die` animation sequence on every machine (`A_Die_Montage` exists but nothing uses it). Death sounds and effects that must follow the fall go on `A_Die` as anim notifies (see `AudioSystemArchitecture.md`).
 
 ---
 
-## AEnemyBase
+## AEnemyBase and the Duel Bot
 
-**Location**: `Source/Makhia/Public/Character/EnemyBase.h`
+**Location**: `Source/Makhia/Public/Character/EnemyBase.h`, `Source/Makhia/Public/AI/MKHDuelBot.h`
 
-AI-controlled characters. Unlike the player, enemies own their ASC directly.
+AI-controlled characters. Unlike the player, enemies own their ASC directly. They have the full movement framework of `ACharacterBase` (`BP_Enemy_Primary` too: it simply stays Idle).
 
 ### Key Differences from Player
 
@@ -146,70 +165,100 @@ AI-controlled characters. Unlike the player, enemies own their ASC directly.
 | ASC Owner | `AMKHPlayerState` | `AEnemyBase` itself |
 | ASC Actor Info | `InitAbilityActorInfo(PlayerState, this)` | `InitAbilityActorInfo(this, this)` |
 | Replication Mode | `Mixed` | `Minimal` |
-| Init Trigger | `PossessedBy` / `OnRep_PlayerState` | `BeginPlay` |
+| Init Trigger | `PossessedBy` / `OnRep_PlayerState` | `BeginPlay` (every machine, after the components' BeginPlay) |
+| Movement input | Enhanced Input (`SetupInput`) | AI path following (`CharacterMovementComponent` acceleration) |
 
-Enemies replicate a `bInitAttributes` flag so clients can broadcast initial values after attribute setup completes server-side.
+Enemies replicate a `bInitAttributes` flag so clients can broadcast initial values after attribute setup completes server-side. `AEnemyBase::InitAbilityActorInfo` also calls `SyncCurrentStateTagToASC()` like the player.
+
+### Duel bot death and revive
+
+`AMKHDuelBot` dies through the movement state machine, like the player: `HandleDeathEvent` (`Event.Combat.Death`, server) → `SetDead(true)` → `Multicast_TransitionToMovementState(Dead, true)`. `UDeadState` adds `State.Movement.Dead` (read by `AMKHDuelBotController::IsCharacterDead`, the damage pipeline and ability blocking) and switches the capsule to the dead collision on every machine. The bot only adds its own presentation: the replicated `bIsDead` flag and the optional ragdoll (`bRagdollOnDeath`, off on `BP_DuelBot`: it shares `ABP_MKHPlayerCharacter` with the player, so the Dead state plays the same death animation; a ragdoll would replace it). The revive (`ResetForNewRound` → `SetDead(false)`) forces `Idle`, which restores the Pawn collision. A single source for the Dead tag avoids two writers (state machine loose tag + replicated loose tag count) overwriting each other.
 
 ---
 
 ## Movement Components
 
-All movement components inherit from `UActorComponent` and follow a consistent pattern: each component receives input, manages its own state, and coordinates with other components through the shared `AMKHPlayerCharacter` reference.
+All movement components inherit from `UActorComponent` and follow a consistent pattern: each component receives input (players) or is driven by abilities and the state machine (AI), manages its own state, and coordinates with other components through the shared **`ACharacterBase`** owner (`GetValidCharacter()`, BlueprintCallable `GetOwnerCharacter()`).
 
 ### UBasicMovementComponent
 
-**Location**: `Source/Makhia/Public/Player/Components/BasicMovement/BasicMovementComponent.h`
+**Location**: `Source/Makhia/Public/Character/Components/BasicMovement/BasicMovementComponent.h`
 
-- Processes WASD/gamepad movement input and mouse/gamepad look input.
+- Processes WASD/gamepad movement input and mouse/gamepad look input (players only: never bound on AI).
 - Tracks whether the character has active movement input (used by other systems).
-- Manages movement smoothing and sensitivity settings.
+- Owns the walk speed (`WalkSpeed`) used by the state machine for the default states.
 
 ### UDodgeSystemComponent
 
-**Location**: `Source/Makhia/Public/Player/Components/Dodge/DodgeSystemComponent.h`
+**Location**: `Source/Makhia/Public/Character/Components/Dodge/DodgeSystemComponent.h`
 
 - Handles dodge initiation, direction blending, and cooldown.
-- Checks the current movement state against a dodgeable-state whitelist (`Idle`, `CrouchingIdle`, `CrouchingMoving`, `Walking`, `Sprinting`).
-- Remembers pre-dodge crouch state and restores it after the dodge ends.
-- Replicates `bIsDodging` for multiplayer; has a Server RPC for `StartDodge`.
-- Broadcasts `OnDodgeFinishedDelegate` when the dodge ends.
+- Checks the current movement state against a dodgeable-state whitelist (`Idle`, `CrouchingIdle`, `CrouchingMoving`, `Walking`, `Sprinting`, `Blocking`, `Attacking`, `Dodging`).
+- Crouches the character for the dodge and stands it up afterwards **only if the dodge really crouched it** (`bCrouchedForDodge`: the crouch is refused from Attacking and Blocking, and a dodge from a crouch stays crouched). When the headroom is blocked at the end (e.g. the opponent's capsule), the stand up stays pending and is retried every tick (`StandUpAfterDodge`, log `has no headroom to stand up, retrying`).
+- Failsafe: a dodge still running after `MaxDodgeDuration` (2 s) is reset with a warning (`GA_Dodge` resets it only in its `OnEndAbility`).
+- Replicates `bIsDodging` for multiplayer.
+- **Direction source**:
+  - local player (`IsLocallyControlled() && IsPlayerControlled()`): Enhanced Input from `BasicMovementSystem`, blended with the initial direction during the dodge (`InputInfluenceFactor`);
+  - AI: `SetRequestedDodgeDirection(FVector)` before `StartDodge` (e.g. from `GA_Dodge`'s caller); the dodge then keeps that direction for its whole duration, no blending. Without a request, the AI falls back to the character's acceleration, like remote proxies;
+  - the movement input is applied where the character is locally controlled (owning client, or the server for an AI).
 
 ### UCrouchSystemComponent
 
-**Location**: `Source/Makhia/Public/Player/Components/Crouch/CrouchSystemComponent.h`
+**Location**: `Source/Makhia/Public/Character/Components/Crouch/CrouchSystemComponent.h`
 
 - Toggles crouching with collision-safe uncrouch checks.
-- Smoothly adjusts capsule height transitions.
-- Provides `CanUncrouchSafely()` used by Sprint and Dodge components.
-- Manages crouch speed settings.
+- Provides `CanUncrouchSafely()` used by Sprint, Dodge and Blocking: a capsule overlap at standing height on `ECC_Pawn`, ignoring the character, the actors attached to it (its weapons) and **other pawns** (duelists often touch; the opponent's capsule left a character crouched after a dodge next to it, M8.1; the character movement then stands up as soon as there is room); the blocking component is logged (`LogMKHMovement` Verbose).
+- Manages crouch speed settings. Server RPCs (`ServerCrouch`, `ServerUnCrouch`) are only sent by non-authority callers.
+
+### UBlockingSystemComponent
+
+**Location**: `Source/Makhia/Public/Character/Components/Blocking/BlockingSystemComponent.h`
+
+- `StartBlocking` / `StopBlocking` (called by `GA_Block`), replicated `bWantsToBlock`, enters/leaves the `Blocking` state.
+- `ApplyBlockingStateModifiers` / `RemoveBlockingStateModifiers` (BlueprintNativeEvent, extended by `BP_BlockingSystemComp` for stamina recovery).
 
 ### UJumpSystemComponent
 
-**Location**: `Source/Makhia/Public/Player/Components/Jump/JumpSystemComponent.h`
+**Location**: `Source/Makhia/Public/Character/Components/Jump/JumpSystemComponent.h`
 
 - Handles jump input and delegates to `ACharacter::Jump()`.
 - Tracks landing state and timing for animation.
-- Manages jump cooldown.
-- Receives `Landed()` callbacks from `AMKHPlayerCharacter`.
+- Receives `Landed()` callbacks from `ACharacterBase`.
 
 ### USprintSystemComponent
 
-**Location**: `Source/Makhia/Public/Player/Components/Sprint/SprintSystemComponent.h`
+**Location**: `Source/Makhia/Public/Character/Components/Sprint/SprintSystemComponent.h`
 
-- Toggles sprinting on/off.
+- Toggles sprinting on/off (`bSprintAsDefault` inverts the key: sprint is the default pace).
 - Automatically uncrouches when sprint starts (with collision check).
-- Tracks sprint interruption conditions.
 - Prevents sprinting while dodging.
 
 ### Component Cooperation
 
-Components coordinate through the shared `AMKHPlayerCharacter` reference:
+Components coordinate through the shared `ACharacterBase` reference:
 
 **Sprint ↔ Crouch**: Sprint auto-uncrouches if `CanUncrouchSafely()` returns true; otherwise sprint is cancelled.
 
-**Dodge ↔ Crouch**: Dodge records whether the character was crouching before the dodge (`bWasCrouchingPreDodge`) and restores the crouch state on dodge end.
+**Dodge ↔ Crouch**: Dodge records whether it crouched the character itself (`bCrouchedForDodge`, never a blind toggle) and stands it up on dodge end, retrying while the headroom is blocked; a character crouched before the dodge stays crouched (`bWasCrouchingPreDodge`). A player walks away from a blocked spot; the bot has nobody to do it, and `Root > Uncrouch` would retry forever from the same place, so `MKHSetCrouchTask` calls `UCrouchSystemComponent::TryStandUpWithNudge` (server only): it steps the bot to the nearest spot within 40 cm where the standing capsule fits and logs the blocker.
 
 **Dodge ↔ State Machine**: Before dodging, the component checks `MovementStateMachine->GetCurrentState()` against the dodgeable-state whitelist.
+
+The automatic transitions between Idle, Walking, Sprinting and the crouch states use the `CharacterMovementComponent` velocity, not the input: an AI's path following drives them exactly like a player's input.
+
+### UMKHCharacterMovementComponent (pawn stacking)
+
+**Location**: `Source/Makhia/Public/Character/Components/CharacterMovement/MKHCharacterMovementComponent.h`
+
+`ACharacterBase` replaces the engine `CharacterMovement` subobject with this class (`SetDefaultSubobjectClass` in its constructor; the constructor takes a defaulted `FObjectInitializer`, so subclasses keep their default constructors and Blueprint children keep their `CharacterMovement` settings).
+
+**Problem it solves:** a character that jumps (or drops from a ledge) onto the other one's head stood on it, or rested on the top of the capsule and slid off slowly in the falling animation. The engine rejects a pawn as a *base* (`CanCharacterStepUpOn = No` → `JumpOff` in a random direction) but still accepts it as a *landing spot*, and when the landing is refused the falling slide on the almost flat top of a capsule is very slow. Lowering the jump would not help: ledges in the map give the same height.
+
+**Rule:**
+- `IsValidLandingSpot` returns false for any pawn hit: a character never lands on another one.
+- `HandleImpact` records a falling contact on the upper part of another pawn (contact normal up component ≥ `PawnTopMinNormalZ`, default 0.3; side contacts are left to the engine).
+- The next `PhysFalling` adds horizontal speed away from that pawn (centre to centre, own facing when aligned) up to `PawnPushOffSpeed` (default 350 cm/s), keeping the vertical speed. It is applied before the step because the engine rewrites `Velocity` after an impact.
+
+The push depends only on positions, so server and owning client predict the same move. It applies to players and the duel bot alike. Tune the two properties on the `CharacterMovement` component of the character Blueprints.
 
 ---
 
@@ -217,9 +266,9 @@ Components coordinate through the shared `AMKHPlayerCharacter` reference:
 
 ### UMovementStateMachine
 
-**Location**: `Source/Makhia/Public/Player/MovementStateMachine/MovementStateMachine.h`
+**Location**: `Source/Makhia/Public/Character/MovementStateMachine/MovementStateMachine.h`
 
-An `UActorComponent` that manages a map of `EMovementStateValue` → `UMovementState*` objects.
+An `UActorComponent` on `ACharacterBase` that manages a map of `EMovementStateValue` → `UMovementState*` objects. It runs on every machine (server, owner, simulated proxies).
 
 **Tick behaviour**:
 1. Calls `UpdateState(DeltaTime)` on the current state.
@@ -228,26 +277,18 @@ An `UActorComponent` that manages a map of `EMovementStateValue` → `UMovementS
 **Transition logic**:
 - `TransitionToState(NewState, bForceTransition)` returns `false` if already in the target state or if the current state's `CanTransitionTo()` returns `false` (unless forced).
 - `PerformStateTransition(NewState)` calls `ExitState` on the old state, updates `PreviousState`/`CurrentState`, calls `EnterState` on the new state, and broadcasts `OnStateChanged`.
+- `SyncCurrentStateTagToASC()` adds the current state's tag once the ASC is ready (called by the characters' `InitAbilityActorInfo`).
 
 ### EMovementStateValue
 
-**Location**: `Source/Makhia/Public/Player/MovementStateMachine/MovementStateTypes.h`
+**Location**: `Source/Makhia/Public/Character/MovementStateMachine/MovementStateTypes.h`
 
 ```cpp
 UENUM(BlueprintType)
 enum class EMovementStateValue : uint8
 {
-    None              UMETA(DisplayName = "None"),
-    Idle              UMETA(DisplayName = "Idle"),
-    Walking           UMETA(DisplayName = "Walking"),
-    Sprinting         UMETA(DisplayName = "Sprinting"),
-    CrouchingIdle     UMETA(DisplayName = "Crouching Idle"),
-    CrouchingMoving   UMETA(DisplayName = "Crouching Moving"),
-    Jumping           UMETA(DisplayName = "Jumping"),
-    Falling           UMETA(DisplayName = "Falling"),
-    LandingInPlace    UMETA(DisplayName = "Landing In Place"),
-    LandingMoving     UMETA(DisplayName = "Landing Moving"),
-    Dodging           UMETA(DisplayName = "Dodging")
+    None, Idle, Walking, Sprinting, CrouchingIdle, CrouchingMoving, Jumping, Falling,
+    LandingInPlace, LandingMoving, Dodging, Blocking, Attacking, Dead
 };
 ```
 
@@ -255,15 +296,15 @@ enum class EMovementStateValue : uint8
 
 Static helper class with:
 - `MovementStateToString(EMovementStateValue)` — enum to display string.
-- `IsGroundedState()` — returns `true` for Idle, Walking, Sprinting, CrouchingIdle, CrouchingMoving, LandingInPlace, LandingMoving, Dodging.
+- `IsGroundedState()` — returns `true` for Idle, Walking, Sprinting, CrouchingIdle, CrouchingMoving, LandingInPlace, LandingMoving, Dodging, Blocking, Attacking.
 - `IsAirborneState()` — returns `true` for Jumping, Falling.
-- `CanReceiveMovementInput()` — returns `true` for Idle, Walking, Sprinting, CrouchingIdle, CrouchingMoving, Jumping, Falling.
+- `CanReceiveMovementInput()` — returns `true` for Idle, Walking, Sprinting, CrouchingIdle, CrouchingMoving, Jumping, Falling, Blocking, Attacking.
 
 ### UMovementState (Base)
 
-**Location**: `Source/Makhia/Public/Player/MovementStateMachine/MovementState.h`
+**Location**: `Source/Makhia/Public/Character/MovementStateMachine/MovementState.h`
 
-Abstract base for all movement states.
+Abstract base for all movement states. `Initialize(UMovementStateMachine*, ACharacterBase*)` stores the owner; states read it through `GetOwnerCharacter()` (BlueprintPure).
 
 **Lifecycle**:
 - `EnterState(PreviousState)` — Sets movement speed via `SetStateSpeed()`, adds the state's gameplay tag to the ASC, calls the Blueprint event `OnEnterState`.
@@ -275,56 +316,36 @@ Abstract base for all movement states.
 - `GetDesiredTransition()` — Default returns `None`; subclasses override for automatic transitions.
 
 **Speed management** (`GetSpeedForState`):
-| State | Default Speed |
+| State | Speed |
 |---|---|
-| Dodging | `DodgeSystem->DodgeSpeed` (typically 600) |
-| CrouchingIdle / CrouchingMoving | `CrouchSystem->CrouchSpeed` (typically 150) |
-| Sprinting | `SprintSystem->SprintSpeed` (typically 600) |
-| All others | `BasicMovementSystem->BaseMovementSpeed` (typically 300) |
+| Dodging | `DodgeSystem->GetDodgeSpeed()` |
+| CrouchingIdle / CrouchingMoving | `CrouchSystem->GetCrouchSpeed()` |
+| Sprinting | `SprintSystem->GetRunSpeed()` |
+| Blocking | `BlockingSystem->GetBlockingSpeed()` |
+| Attacking / Dead | 0 |
+| All others | `BasicMovementSystem->GetWalkSpeed()` |
 
 ### Concrete State Classes
 
-Located in `Source/Makhia/Public/Player/MovementStateMachine/States/`:
+Located in `Source/Makhia/Public/Character/MovementStateMachine/States/`:
 
 | State Class | Auto-Transitions To |
 |---|---|
-| `UIdleMovementState` | Walking, Sprinting, Jumping, CrouchingIdle |
-| `UWalkingMovementState` | Idle, Sprinting, Jumping, Dodging, CrouchingMoving |
-| `USprintingMovementState` | Walking, Idle, Jumping |
-| `UCrouchingIdleMovementState` | CrouchingMoving, Idle, Dodging |
-| `UCrouchingMovingMovementState` | CrouchingIdle, Walking, Dodging |
-| `UJumpingMovementState` | Falling |
-| `UFallingMovementState` | LandingInPlace, LandingMoving |
-| `ULandingInPlaceMovementState` | Idle |
-| `ULandingMovingMovementState` | Walking |
-| `UDodgingMovementState` | Idle, Walking (when dodge ends) |
+| `UIdleMovementState` | Walking, Sprinting, Jumping, Falling, Dodging, CrouchingIdle/Moving, Attacking |
+| `UWalkingMovementState` | Idle, Sprinting, Jumping, Falling, Dodging, CrouchingIdle/Moving, Attacking |
+| `USprintingMovementState` | Walking, Idle, Jumping, Falling, Dodging, CrouchingIdle/Moving, Attacking |
+| `UCrouchingIdleMovementState` | CrouchingMoving, Idle, Walking, Dodging, Blocking, Attacking |
+| `UCrouchingMovingMovementState` | CrouchingIdle, Walking, Sprinting, Idle, Dodging, Blocking, Attacking |
+| `UJumpingMovementState` | Falling, landing and ground states, Attacking |
+| `UFallingMovementState` | LandingInPlace, LandingMoving, Blocking, Attacking |
+| `ULandingInPlaceMovementState` | Idle, CrouchingIdle, Blocking, Attacking |
+| `ULandingMovingMovementState` | Walking, Sprinting, Idle, CrouchingMoving, Blocking, Attacking |
+| `UDodgingMovementState` | Ground states, Blocking, Attacking (when the dodge ends) |
+| `UBlockingState` | Idle, Jumping, Falling, Dodging, Attacking (priority) |
+| `UAttackingMovementState` | Idle, Blocking (when `Ability.Attacking` ends) |
+| `UDeadState` | none: only a forced transition leaves it (revive) |
 
-### State Transition Diagram
-
-```
-                    ┌──────────────┐
-         ┌─────────┤    Idle      ├──────────┐
-         │         └──────┬───────┘          │
-         │                │                  │
-         ▼                ▼                  ▼
-  ┌─────────────┐  ┌─────────────┐   ┌──────────────┐
-  │ CrouchIdle  │  │   Walking   │   │   Jumping    │
-  └──────┬──────┘  └──────┬──────┘   └──────┬───────┘
-         │                │                  │
-         ▼                ▼                  ▼
-  ┌─────────────┐  ┌─────────────┐   ┌──────────────┐
-  │ CrouchMove  │  │  Sprinting  │   │   Falling    │
-  └──────┬──────┘  └─────────────┘   └──────┬───────┘
-         │                                   │
-         │         ┌─────────────┐           │
-         └────────►│   Dodging   │◄──────────┘
-                   └──────┬──────┘     ┌─────────────┐
-                          │            │ LandInPlace  │
-                          └───────────►└─────────────┘
-                                       ┌─────────────┐
-                                       │ LandMoving  │
-                                       └─────────────┘
-```
+`UDeadState` makes the capsule ignore everything but the world, and on the machine where a **player** locally controls the character swaps to the dead input mapping (`AMKHPlayerController::SetGameplayInputEnabled`); AI-controlled characters have no input to block.
 
 ### Observer Pattern — OnStateChanged
 
@@ -339,13 +360,13 @@ UPROPERTY(BlueprintAssignable, Category = "Movement State Machine")
 FOnMovementStateChanged OnStateChanged;
 ```
 
-Any system can subscribe. The animation instance (`UMKHMKHPlayerAnimInstance`) is the primary subscriber:
+Any system can subscribe. The animation instance (`UMKHPlayerAnimInstance`) is the primary subscriber:
 
 ```cpp
-void UMKHMKHPlayerAnimInstance::SubscribeToMovementStateChanges()
+void UMKHPlayerAnimInstance::SubscribeToMovementStateChanges()
 {
-    PlayerCharacter->MovementStateMachine->OnStateChanged.AddDynamic(
-        this, &UMKHMKHPlayerAnimInstance::OnMovementStateChanged);
+    OwnerCharacter->GetMovementStateMachine()->OnStateChanged.AddDynamic(
+        this, &UMKHPlayerAnimInstance::OnMovementStateChanged);
 }
 ```
 
@@ -355,24 +376,28 @@ void UMKHMKHPlayerAnimInstance::SubscribeToMovementStateChanges()
 
 ## Animation System
 
-**Class**: `UMKHMKHPlayerAnimInstance` (inherits `UAnimInstance`)  
-**Location**: `Source/Makhia/Public/Player/PlayerAnimation/MKHMKHPlayerAnimInstance.h`
+**Class**: `UMKHPlayerAnimInstance` (inherits `UAnimInstance`, parent of `ABP_MKHPlayerCharacter`)
+**Location**: `Source/Makhia/Public/Character/Animation/MKHPlayerAnimInstance.h`
+
+Despite its name it animates every `ACharacterBase`: `BP_MKHPlayerCharacter` and `BP_DuelBot` both use `ABP_MKHPlayerCharacter`.
 
 ### Key Properties
 
 | Property | Type | Purpose |
 |---|---|---|
-| `Speed` | `float` | Character speed for blend spaces |
+| `OwnerCharacter` | `ACharacterBase*` | Pawn owner, cached at `NativeBeginPlay` |
+| `CurrentSpeed` / `Direction` | `float` | Velocity size and direction for blend spaces |
+| `bIsHoldingWeapon` | `bool` | Copied from the owner, switches the locomotion blendspace |
 | `CurrentMovementState` | `EMovementStateValue` | Current state for animation state machine |
 | `PreviousMovementState` | `EMovementStateValue` | Previous state for transition logic |
 | `CrouchingTransitionTime` | `float` | 0–100 blend value for crouching pose |
-| `CrouchingTransitionTarget` | `float` | Target value: 100 when crouched, 0 when standing |
 
 ### Lifecycle
 
-1. **`NativeBeginPlay`**: Gets `AMKHPlayerCharacter` reference, initialises Speed/State to defaults, subscribes to state changes.
-2. **`OnMovementStateChanged`**: Updates state properties, snaps crouch transition value, reads `MaxWalkSpeed` for blend space.
-3. **`NativeUninitializeAnimation`**: Unsubscribes from state changes.
+1. **`NativeBeginPlay`**: Gets the `ACharacterBase` owner, initialises the state to None, subscribes to state changes.
+2. **`NativeUpdateAnimation`**: Speed, direction, `bIsHoldingWeapon`.
+3. **`OnMovementStateChanged`**: Updates state properties, snaps the crouch transition value.
+4. **`NativeUninitializeAnimation`**: Unsubscribes from state changes.
 
 ---
 
@@ -389,13 +414,15 @@ Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Player Camera"));
 Camera->SetupAttachment(CameraBoom);
 ```
 
-The character uses `bUseControllerRotationYaw = false` with `CharacterMovement->bOrientRotationToMovement = true` so the character rotates to face the direction of movement while the camera follows the controller rotation.
+The character uses `bUseControllerRotationYaw = false` with `CharacterMovement->bOrientRotationToMovement = true` so the character rotates to face the direction of movement while the camera follows the controller rotation. The duel bot uses the same orientation settings. Abilities that face the attack (`UMKHDamageAbility::FaceCharacterTowardsAttack`, `SetCharacterOrientation`) use the control rotation: for an AI it follows the controller's focus (`SetFocus` on the opponent).
+
+**Characters never block the camera boom.** `ACharacterBase::IgnoreCameraCollision` sets the capsule and the mesh to ignore `ECC_Camera` and the custom `CameraObstacle` channel (`ECC_MKHCameraObstacle` in `MKHCollisionChannels.h`): the `Camera Boom` of `BP_MKHPlayerCharacter` probes `CameraObstacle`, not `ECC_Camera`, so ignoring only `ECC_Camera` has no effect on it (called in `PostInitializeComponents`, so it wins over the Blueprint component settings). Otherwise the boom probe hits the other character and shortens/lengthens every frame it moves: the clearest case was a dead player's camera snapping in and out while the opponent (or the bot) crouch-spammed over the corpse. `SetCollisionProfileName` resets the per-channel response, so every profile change on those components calls it again (`UDeadState::ExitState` on revive, `AMKHDuelBot::SetMeshRagdoll`).
 
 ---
 
 ## Input System
 
-Makhia uses the Enhanced Input system. Each movement component exposes a `SetupInput(UEnhancedInputComponent*)` method called from `AMKHPlayerCharacter::SetupPlayerInputComponent`.
+Makhia uses the Enhanced Input system. Each movement component exposes a `SetupInput(UEnhancedInputComponent*)` method called from `AMKHPlayerCharacter::SetupPlayerInputComponent`. AI characters never call it: they move through path following and act through abilities.
 
 Components bind their specific `UInputAction` properties (set via Blueprint/editor) to trigger events:
 - `ETriggerEvent::Started` / `ETriggerEvent::Triggered` for input start.
@@ -415,18 +442,18 @@ In `MovementStateTypes.h`, add the new value to `EMovementStateValue`:
 enum class EMovementStateValue : uint8
 {
     // ... existing values ...
-    Dodging           UMETA(DisplayName = "Dodging"),
+    Dead              UMETA(DisplayName = "Dead"),
     YourNewState      UMETA(DisplayName = "Your New State")
 };
 ```
 
 ### Step 2 — Create the State Class
 
-Create `YourNewStateMovementState.h` and `.cpp` in `Source/Makhia/Public/Player/MovementStateMachine/States/`:
+Create `YourNewStateMovementState.h` and `.cpp` in `Source/Makhia/Public/Character/MovementStateMachine/States/`. Read the owner through `GetOwnerCharacter()` (an `ACharacterBase`): the state must work for players and AI.
 
 ```cpp
 UCLASS(BlueprintType, Blueprintable)
-class Makhia_API UYourNewStateMovementState : public UMovementState
+class MAKHIA_API UYourNewStateMovementState : public UMovementState
 {
     GENERATED_BODY()
 
@@ -481,9 +508,9 @@ class UMySystem : public UObject
     GENERATED_BODY()
 
 public:
-    void Subscribe(AMKHPlayerCharacter* PC)
+    void Subscribe(ACharacterBase* Character)
     {
-        PC->MovementStateMachine->OnStateChanged.AddDynamic(
+        Character->GetMovementStateMachine()->OnStateChanged.AddDynamic(
             this, &UMySystem::OnMovementStateChanged);
     }
 
@@ -498,5 +525,3 @@ public:
 For cleanup, call `RemoveDynamic` or use `MovementStateMachine->UnsubscribeFromStateChanges(this)`.
 
 Blueprint subscribers can bind to `OnStateChanged` directly in the Event Graph.
-
-

@@ -51,6 +51,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Custom Values | Combat", meta = (UIMin = "0.0", UIMax = "1.0"))
 	float BlockStabilityPercent = 0.f;
 	
+	/** Base armor value applied to the player when equipping this item. Armor only. */
+	UPROPERTY(EditDefaultsOnly, Category = "Custom Values | Combat")
+	float BaseArmorGiven = 0.f;
+	
 	/** Runtime instance class used to manage equip/unequip callbacks and spawned actors. */
 	UPROPERTY(EditDefaultsOnly, Category = "Custom Values | Info")
 	TSubclassOf<UEquipmentInstance> InstanceType;

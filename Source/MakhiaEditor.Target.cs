@@ -21,5 +21,12 @@ public class MakhiaEditorTarget : TargetRules
 		bOverrideBuildEnvironment = true;
 
 		ExtraModuleNames.AddRange( new string[] { "Makhia" } );
+
+		// Steam online backend and Discord rich presence: both are Win64 only (Linux runs the Win64 build through Proton).
+		if (Target.Platform == UnrealTargetPlatform.Win64)
+		{
+			ExtraModuleNames.Add("MakhiaSteam");
+			ExtraModuleNames.Add("MakhiaDiscord");
+		}
 	}
 }

@@ -5,11 +5,14 @@
 
 #include "Equipment/EquipmentDefinition.h"
 #include "Equipment/EquipmentInstance.h"
-#include "Inventory/InventoryItem/InventoryItem.h"
+#include "Data/MKHDataSubsystem.h"
 #include "Net/UnrealNetwork.h"
 #include "AbilitySystem/MKHAbilitySystemComponent.h"
+#include "Abilities/GameplayAbilityTypes.h"
 #include "AbilitySystemGlobals.h"
 #include "AbilitySystem/MKHGameplayTags.h"
+#include "Inventory/MKHSkillLayout.h"
+#include "MKHLogChannels.h"
 
 UMKHAbilitySystemComponent* FRPGEquipmentList::GetAbilitySystemComponent()
 {
@@ -19,9 +22,15 @@ UMKHAbilitySystemComponent* FRPGEquipmentList::GetAbilitySystemComponent()
 	return Cast<UMKHAbilitySystemComponent>(UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(OwnerComponent->GetOwner()));
 }
 
+float FRPGEquipmentEntry::GetBaseArmor() const
+{
+	return IsValid(EquipmentDefinition) ? GetDefault<UEquipmentDefinition>(EquipmentDefinition)->BaseArmorGiven : 0.f;
+}
+
 void FRPGEquipmentList::ApplyEntryEffects(FRPGEquipmentEntry& Entry)
 {
-	if (Entry.HasStats())
+	// Base armor is applied alongside the rolled stats, so armor pieces without rolls still need this call.
+	if (Entry.HasStats() || Entry.GetBaseArmor() > 0.f)
 	{
 		AddEquipmentStats(&Entry);
 	}
@@ -84,19 +93,17 @@ UEquipmentInstance* FRPGEquipmentList::AddEntry(const FRPGEquipmentEntry& InEntr
 		InstanceType = UEquipmentInstance::StaticClass();
 	}
 
-	if (FindEntryBySlot(EquipmentCDO->SlotTag) != nullptr)
+	FGameplayTag SlotTag = EquipmentCDO->SlotTag.MatchesTag(MKHGameplayTags::Equip::WeaponSlot) ? MKHGameplayTags::Equip::WeaponSlot : EquipmentCDO->SlotTag;
+	if (FindEntryBySlot(SlotTag) != nullptr)
 	{
 		// If the slot is already occupied, remove the existing entry before adding the new one.
-		RemoveEntryBySlot(EquipmentCDO->SlotTag);
+		RemoveEntryBySlot(SlotTag);
 	}
 
 	FRPGEquipmentEntry& NewEntry = Entries.AddDefaulted_GetRef();
-	NewEntry.EntryTag = InEntry.EntryTag;
-	NewEntry.RarityTag = InEntry.RarityTag;
-	NewEntry.SlotTag = EquipmentCDO->SlotTag;
+	NewEntry.Item = InEntry.Item;
+	NewEntry.SlotTag = SlotTag;
 	NewEntry.EquipmentDefinition = InEntry.EquipmentDefinition;
-	NewEntry.EffectPackage = InEntry.EffectPackage;
-	NewEntry.OriginalItemID = InEntry.OriginalItemID;
 	NewEntry.Instance = NewObject<UEquipmentInstance>(OwnerComponent->GetOwner(), InstanceType);
 
 	ApplyEntryEffects(NewEntry);
@@ -137,27 +144,27 @@ void FRPGEquipmentList::RemoveEntryBySlot(const FGameplayTag& SlotTag)
 	}
 }
 
-FRPGEquipmentEntry* FRPGEquipmentList::FindEntryMutable(int64 OriginalItemID, const FGameplayTag& SlotTag)
+FRPGEquipmentEntry* FRPGEquipmentList::FindEntryMutable(int64 ItemID, const FGameplayTag& SlotTag)
 {
-	return Entries.FindByPredicate([OriginalItemID, &SlotTag](FRPGEquipmentEntry& Entry)
+	return Entries.FindByPredicate([ItemID, &SlotTag](FRPGEquipmentEntry& Entry)
 	{
-		return Entry.OriginalItemID == OriginalItemID && Entry.SlotTag.MatchesTagExact(SlotTag);
+		return Entry.Item.ItemID == ItemID && Entry.SlotTag.MatchesTagExact(SlotTag);
 	});
 }
 
-const FRPGEquipmentEntry* FRPGEquipmentList::FindEntry(int64 OriginalItemID, const FGameplayTag& SlotTag) const
+const FRPGEquipmentEntry* FRPGEquipmentList::FindEntry(int64 ItemID, const FGameplayTag& SlotTag) const
 {
-	return Entries.FindByPredicate([OriginalItemID, &SlotTag](const FRPGEquipmentEntry& Entry)
+	return Entries.FindByPredicate([ItemID, &SlotTag](const FRPGEquipmentEntry& Entry)
 	{
-		return Entry.OriginalItemID == OriginalItemID && Entry.SlotTag.MatchesTagExact(SlotTag);
+		return Entry.Item.ItemID == ItemID && Entry.SlotTag.MatchesTagExact(SlotTag);
 	});
 }
 
-const FRPGEquipmentEntry* FRPGEquipmentList::FindEntryByItemID(int64 OriginalItemID) const
+const FRPGEquipmentEntry* FRPGEquipmentList::FindEntryByItemID(int64 ItemID) const
 {
-	return Entries.FindByPredicate([OriginalItemID](const FRPGEquipmentEntry& Entry)
+	return Entries.FindByPredicate([ItemID](const FRPGEquipmentEntry& Entry)
 	{
-		return Entry.OriginalItemID == OriginalItemID;
+		return Entry.Item.ItemID == ItemID;
 	});
 }
 
@@ -182,9 +189,6 @@ void FRPGEquipmentList::PreReplicatedRemove(const TArrayView<int32>& RemovedIndi
 	for (const int32 Index : RemovedIndices)
 	{
 		UnEquippedEntryDelegate.Broadcast(Entries[Index]);
-
-		// GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red,
-		// 	FString::Printf(TEXT("UnEquipped Item: %s"), *Entries[Index].EntryTag.ToString()));
 	}
 }
 
@@ -212,12 +216,17 @@ UEquipmentManagerComponent::UEquipmentManagerComponent() : EquipmentList(this)
 
 void UEquipmentManagerComponent::PrintEquipmentList() const
 {
+	if (!IsValid(GEngine))
+	{
+		return;
+	}
+
 	TArray<FRPGEquipmentEntry> Entries;
 	EquipmentList.GetEntries(Entries);
 	for (const FRPGEquipmentEntry& Entry : Entries)
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow,
-			FString::Printf(TEXT("Slot: %s, Item: %s"), *Entry.SlotTag.ToString(), *Entry.EntryTag.ToString()));
+			FString::Printf(TEXT("Slot: %s, Item: %s"), *Entry.SlotTag.ToString(), *Entry.Item.ItemTag.ToString()));
 	}
 }
 
@@ -228,36 +237,46 @@ void UEquipmentManagerComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProp
 	DOREPLIFETIME(UEquipmentManagerComponent, EquipmentList);
 }
 
-FRPGEquipmentEntry UEquipmentManagerComponent::BuildEquipmentEntry(const UInventoryItem* InventoryItem)
+bool UEquipmentManagerComponent::BuildEquipmentEntry(const FMKHItemEntry& Item, FRPGEquipmentEntry& OutEntry) const
 {
-	check(IsValid(InventoryItem));
+	const UMKHDataSubsystem* DataSubsystem = UMKHDataSubsystem::Get(this);
+	const FMasterItemDefinition* ItemDef = IsValid(DataSubsystem) ? DataSubsystem->FindItemDefinition(Item.ItemTag) : nullptr;
+	if (!ItemDef || !IsValid(ItemDef->EquipmentItemProps.EquipmentClass))
+	{
+		UE_LOG(LogMKHInventory, Warning, TEXT("UEquipmentManagerComponent::BuildEquipmentEntry: '%s' has no equipment definition, cannot equip."),
+			*Item.ItemTag.ToString());
+		return false;
+	}
 
-	const TSubclassOf<UEquipmentDefinition> EquipDefClass = InventoryItem->ItemDefinition.EquipmentItemProps.EquipmentClass;
-	check(EquipDefClass);
-
-	// const UEquipmentDefinition* EquipCDO = GetDefault<UEquipmentDefinition>(EquipDefClass);
-
-	FRPGEquipmentEntry Entry;
-	Entry.EquipmentDefinition  = EquipDefClass;
-	Entry.EntryTag             = InventoryItem->ItemTag;
-	Entry.SlotTag              = InventoryItem->SlotTag;
-	Entry.RarityTag            = InventoryItem->GetRarityTag();
-	Entry.EffectPackage        = InventoryItem->GetEffectPackage();
-	Entry.OriginalItemID       = InventoryItem->GetItemID();
-	return Entry;
+	OutEntry.Item = Item;
+	OutEntry.EquipmentDefinition = ItemDef->EquipmentItemProps.EquipmentClass;
+	return true;
 }
 
-void UEquipmentManagerComponent::EquipItem(const FRPGEquipmentEntry& InEntry)
+void UEquipmentManagerComponent::EquipItem(const FMKHItemEntry& Item)
 {
-	if (!GetOwner()->HasAuthority())
+	const AActor* Owner = GetOwner();
+	if (!IsValid(Owner) || !Owner->HasAuthority())
 	{
-		ServerEquipItem(InEntry);
+		UE_LOG(LogMKHInventory, Warning, TEXT("UEquipmentManagerComponent::EquipItem: ignored, equipping is server only."));
 		return;
 	}
 
-	if (UEquipmentInstance* Result = EquipmentList.AddEntry(InEntry))
+	FRPGEquipmentEntry NewEntry;
+	if (!BuildEquipmentEntry(Item, NewEntry))
+	{
+		return;
+	}
+
+	if (UEquipmentInstance* Result = EquipmentList.AddEntry(NewEntry))
 	{
 		Result->OnEquipped();
+	}
+
+	// A weapon replacing another in hand stays one unsheathe (AddEntry swaps without UnEquipItem).
+	if (WeaponEventsMuteCount == 0 && Item.ItemTag.MatchesTag(MKHGameplayTags::Equip::Category_Weapon))
+	{
+		SendOwnerEvent(MKHGameplayTags::Event::WeaponUnsheathed);
 	}
 }
 
@@ -291,6 +310,26 @@ void UEquipmentManagerComponent::UnEquipItem(const FGameplayTag& SlotTag)
 	}
 
 	EquipmentList.RemoveEntryBySlot(SlotTag);
+
+	if (WeaponEventsMuteCount == 0 && SlotTag.MatchesTag(MKHGameplayTags::Equip::WeaponSlot))
+	{
+		SendOwnerEvent(MKHGameplayTags::Event::WeaponSheathed);
+	}
+}
+
+void UEquipmentManagerComponent::SendOwnerEvent(const FGameplayTag& EventTag) const
+{
+	UMKHAbilitySystemComponent* AbilitySystem = FindOwnerAbilitySystem();
+	if (!IsValid(AbilitySystem))
+	{
+		return;
+	}
+
+	FGameplayEventData Payload;
+	Payload.EventTag = EventTag;
+	Payload.Instigator = AbilitySystem->GetAvatarActor();
+	Payload.Target = Payload.Instigator;
+	AbilitySystem->HandleGameplayEvent(EventTag, &Payload);
 }
 
 const FGameplayTag& UEquipmentManagerComponent::GetSlotTagByItemID(int64 ItemID) const
@@ -318,16 +357,62 @@ void UEquipmentManagerComponent::HideEquippedWeaponMesh(const bool bHide) const
 {
 	if (const UEquipmentInstance* WeaponInstance = GetEquipmentInstanceBySlot(MKHGameplayTags::Equip::WeaponSlot))
 	{
-		for (TObjectPtr<AActor> SpawnedActor : WeaponInstance->GetSpawnedActors()) 
+		for (const TObjectPtr<AActor>& SpawnedActor : WeaponInstance->GetSpawnedActors())
 		{
-			SpawnedActor->SetActorHiddenInGame(bHide);
+			if (IsValid(SpawnedActor))
+			{
+				SpawnedActor->SetActorHiddenInGame(bHide);
+			}
 		}
 	}
 }
 
-void UEquipmentManagerComponent::ServerEquipItem_Implementation(FRPGEquipmentEntry InEntry)
+bool UEquipmentManagerComponent::IsItemSkillActive(int64 ItemID, const FEquipmentEffectPackage& Package, const FGameplayTag& FromSlot, const FGameplayTag& ToSlot) const
 {
-	EquipItem(InEntry);
+	const UMKHAbilitySystemComponent* ASC = FindOwnerAbilitySystem();
+	if (!IsValid(ASC) || EquipmentList.FindEntryByItemID(ItemID) == nullptr)
+	{
+		return false;
+	}
+
+	for (const FGameplayTag& SlotTag : { FromSlot, ToSlot })
+	{
+		const FEquipmentAbilityDefinition* Skill = FMKHSkillLayout::FindSkillInSlot(Package, SlotTag);
+		const FGameplayAbilitySpec* Spec = Skill ? ASC->FindAbilitySpecForAbilityTag(Skill->AbilityTag) : nullptr;
+		if (Spec != nullptr && Spec->IsActive())
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void UEquipmentManagerComponent::ApplyItemSkillLayout(const FMKHItemEntry& Item)
+{
+	const AActor* Owner = GetOwner();
+	if (!IsValid(Owner) || !Owner->HasAuthority())
+	{
+		return;
+	}
+
+	const FRPGEquipmentEntry* Found = EquipmentList.FindEntryByItemID(Item.ItemID);
+	FRPGEquipmentEntry* Entry = Found ? EquipmentList.FindEntryMutable(Item.ItemID, Found->SlotTag) : nullptr;
+	if (Entry == nullptr)
+	{
+		return;
+	}
+
+	Entry->Item.EffectPackage = Item.EffectPackage;
+	if (UMKHAbilitySystemComponent* ASC = FindOwnerAbilitySystem())
+	{
+		ASC->RefreshEquippedSkillInputs(Entry->Item.EffectPackage);
+	}
+	EquipmentList.MarkItemDirty(*Entry);
+}
+
+UMKHAbilitySystemComponent* UEquipmentManagerComponent::FindOwnerAbilitySystem() const
+{
+	return Cast<UMKHAbilitySystemComponent>(UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner()));
 }
 
 void UEquipmentManagerComponent::ServerUnEquipItem_Implementation(FGameplayTag SlotTag)

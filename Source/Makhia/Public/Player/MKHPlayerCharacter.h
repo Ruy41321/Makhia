@@ -3,8 +3,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Player/MovementStateMachine/MovementStateTypes.h"
+#include "Abilities/GameplayAbilityTypes.h"
 #include "Interfaces/MKHAbilitySystemInterface.h"
+#include "Interfaces/MKHDuelParticipantInterface.h"
 #include "Character/CharacterBase.h"
 #include "MKHPlayerCharacter.generated.h"
 
@@ -13,16 +14,7 @@ class UInputMappingContext;
 class UInputAction;
 class UCameraComponent;
 class USpringArmComponent;
-
-class UDodgeSystemComponent;
-class UCrouchSystemComponent;
-class UBlockingSystemComponent;
-class UBasicMovementComponent;
-class UJumpSystemComponent;
-class USprintSystemComponent;
-class UMovementStateMachine;
-class UAnimMontage;
-struct FGameplayTag;
+class UMKHSkinComponent;
 
 /**
  * Broadcast on every peer whenever the replicated username changes.
@@ -33,49 +25,40 @@ struct FGameplayTag;
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FMKHOnUsernameChangedSignature, const FString&, NewUsername);
 
+/** Broadcast on this machine once the player character's ability system is initialized and ready to be used. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FMKHOnPlayerCharacterReadySignature);
 
+/**
+ * Character controlled by a player: camera rig, Enhanced Input bindings of the movement components inherited from
+ * ACharacterBase (see Documentation/CharacterSystemArchitecture.md), ability system owned by AMKHPlayerState, skin
+ * from the player state, replicated username. Takes a slot of the arena duel as a human IMKHDuelParticipant.
+ */
 UCLASS()
-class MAKHIA_API AMKHPlayerCharacter : public ACharacterBase
+class MAKHIA_API AMKHPlayerCharacter : public ACharacterBase, public IMKHDuelParticipant
 {
 	GENERATED_BODY()
 
+	// ============================================================
+	// Lifecycle
+	// ============================================================
+
 public:
+	/** Creates the camera rig and the skin component; the movement components come from ACharacterBase. */
 	AMKHPlayerCharacter();
 
+	/** Per-frame update (currently only forwards to the base class). */
 	virtual void Tick(float DeltaTime) override;
+
+	/** Lets every movement component bind its Enhanced Input actions. */
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
-	
+
+	/** Registers Username for replication. */
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-	
-	/** Sets the character's maximum walk speed */
-	UFUNCTION(BlueprintCallable, Category = "Movement")
-	void SetMaxWalkSpeed(float NewSpeed);
 
-	// Movement State Machine helper functions
-	UFUNCTION(BlueprintPure, Category = "Movement State Machine")
-	EMovementStateValue GetCurrentMovementState() const;
-
-	UFUNCTION(BlueprintPure, Category = "Movement State Machine")
-	EMovementStateValue GetPreviousMovementState() const;
-
-	UFUNCTION(BlueprintCallable, Category = "Movement State Machine")
-	bool TransitionToMovementState(EMovementStateValue NewState, bool bForceTransition = false);
-	
-	UFUNCTION(NetMulticast, Reliable, BlueprintCallable, Category = "Movement State Machine")
-	void Multicast_TransitionToMovementState(EMovementStateValue NewState, bool bForceTransition = false);
-
-	UFUNCTION(BlueprintPure, Category = "Movement State Machine")
-	FString GetCurrentMovementStateAsString() const;
-
-	/** Get the movement state machine component */
-	UFUNCTION(BlueprintPure, Category = "Movement State Machine")
-	UMovementStateMachine* GetMovementStateMachine() const { return MovementStateMachine.Get(); }
-
-	/** Unsubscribe from movement state change events */
-	UFUNCTION(BlueprintCallable, Category = "Movement State Machine")
-	void UnsubscribeFromMovementStateChanges(UObject* Subscriber);
-
+	/** Server: initializes the ability actor info, binds the hit-inflicted event and seeds the host's username. */
 	virtual void PossessedBy(AController* NewController) override;
+
+	/** Client: initializes the ability actor info once the player state (owner of the ASC) has replicated. */
 	virtual void OnRep_PlayerState() override;
 
 	/**
@@ -85,18 +68,16 @@ public:
 	 * unless this re-runs the init once the controller arrives.
 	 */
 	virtual void OnRep_Controller() override;
-	
-	/**
-	 * Stops the given montage on every machine (server, owner, and simulated proxies).
-	 * Needed because GAS does not reliably replicate a montage stop to simulated proxies
-	 * when the owning ability is cancelled externally (e.g. a stun interrupted by an attack).
-	 *
-	 * @param MontageToStop    The specific montage to stop; other montages are left untouched.
-	 * @param InBlendOutTime   Blend-out time used when stopping the montage.
-	 */
-	UFUNCTION(NetMulticast, Reliable)
-	void Multicast_StopMontage(UAnimMontage* MontageToStop, const float InBlendOutTime);
 
+protected:
+	/** Makes the mesh always tick its pose, so animations stay smooth on clients. */
+	virtual void BeginPlay() override;
+
+	// ============================================================
+	// Public Interface (Round reset)
+	// ============================================================
+
+public:
 	/**
 	 * Snaps the character back to its spawn transform on every machine (server, owner and simulated proxies).
 	 * A server-side SetActorTransform is not enough: the movement correction sent to the owning client
@@ -111,6 +92,29 @@ public:
 	 */
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_ResetToSpawnTransform(const FTransform& SpawnTransform);
+
+	// ============================================================
+	// Public Interface (IMKHDuelParticipant)
+	// ============================================================
+
+	/**
+	 * Server: snaps the character back to its spawn (Multicast_ResetToSpawnTransform) and forces the movement state
+	 * machine back to Idle on every machine, the only way out of Dead.
+	 */
+	virtual void ResetForNewRound(const FTransform& SpawnTransform) override;
+
+	/** Returns the replicated username; without one (not signed in), "You" for the local player, empty otherwise. */
+	virtual FText GetParticipantDisplayName() const override;
+
+	/** A player character is always human. */
+	virtual bool IsHumanParticipant() const override { return true; }
+
+	/** Returns the career levels of the player state, INDEX_NONE without one. */
+	virtual int32 GetParticipantCareerLevels() const override;
+
+	// ============================================================
+	// Public Interface (Identity)
+	// ============================================================
 
 	/** Returns the player's display username (replicated to every peer). */
 	UFUNCTION(BlueprintPure, Category = "Player|Identity")
@@ -134,57 +138,42 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Player|Identity")
 	FMKHOnUsernameChangedSignature OnUsernameChanged;
 
-protected:
-	virtual void BeginPlay() override;
-	virtual void InitAbilityActorInfo() override;
-	virtual void Landed(const FHitResult& Hit) override;
+	/**
+	 * Fired on this machine when the player character is fully initialized and ready to be used.
+	 * Bind UI here instead of reading the name from the game state's player data, which is populated
+	 * as soon as the character reference is registered — several frames before the username round-trip
+	 * completes.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Player|Identity")
+	FMKHOnPlayerCharacterReadySignature OnPlayerCharacterReady;
 
-	virtual void BindCallbacksToDependencies() override;
-	virtual void InitClassDefaults() override;
-	virtual void BroadcastInitialValues() override;
+	// ============================================================
+	// Protected / Internal Logic
+	// ============================================================
+
+protected:
+	/** Binds the ASC and attribute set owned by the player state, syncs the movement state tag and, on the server, applies the class defaults. */
+	virtual void InitAbilityActorInfo() override;
 
 	/**
-	 * Reacts to a crowd-control gameplay tag (Stunned / Staggered) being added or removed.
-	 * When the tag becomes active it cancels ongoing movement actions by forcing an uncrouch
-	 * and interrupting any in-progress jump, so crowd control fully suppresses movement.
+	 * Server: hit-inflicted event callback; shows the floating damage text over the target.
 	 *
-	 * @param CallbackTag  The crowd-control tag whose count changed.
-	 * @param NewCount     The new stack count for the tag (greater than zero means active).
+	 * @param GameplayEventData  The hit event, carrying the target, the damage and the critical flag.
 	 */
-	void HandleCrowdControlTagChanged(const FGameplayTag CallbackTag, int32 NewCount);
+	void OnHitInflicted(const FGameplayEventData* GameplayEventData);
 
-public:
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Dodge System")
-	TObjectPtr<UDodgeSystemComponent> DodgeSystem;
+	/**
+	 * Blueprint hook that spawns the floating damage number.
+	 *
+	 * @param SpawnTransform  Transform of the damaged target.
+	 * @param Damage          Damage dealt.
+	 * @param bIsCritical     True for a critical hit.
+	 */
+	UFUNCTION(BlueprintImplementableEvent)
+	void ShowFloatingDamageText(FTransform SpawnTransform, float Damage, bool bIsCritical);
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Crouch System")
-	TObjectPtr<UCrouchSystemComponent> CrouchSystem;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Blocking System")
-	TObjectPtr<UBlockingSystemComponent> BlockingSystem;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Basic Movement")
-	TObjectPtr<UBasicMovementComponent> BasicMovementSystem;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Jump System")
-	TObjectPtr<UJumpSystemComponent> JumpSystem;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Sprint System")
-	TObjectPtr<USprintSystemComponent> SprintSystem;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Movement State Machine")
-	TObjectPtr<UMovementStateMachine> MovementStateMachine;
-		
-	// Property to indicates whenever the character is holding a weapon to switch locomotion blendspace
-	UPROPERTY(BlueprintReadOnly, Replicated, Category = "Animation")
-	bool bIsHoldingWeapon = false;
-	
-protected:
-	// Camera
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, category = "Camera")
-	TObjectPtr<UCameraComponent> Camera;
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Camera")
-	TObjectPtr<USpringArmComponent> CameraBoom;
+	/** Applies the starting abilities and attributes of the character class (see ACharacterBase). */
+	virtual void InitClassDefaults() override;
 
 private:
 	/**
@@ -204,6 +193,9 @@ private:
 	 */
 	void ApplySpawnViewRotation(const FRotator& SpawnRotation);
 
+	/** Dresses the character with the skin of its player state, once that skin is known (see AMKHPlayerState::SetSkinId). */
+	void ApplySkinFromPlayerState();
+
 	/** Server RPC that commits the username on the authority so it replicates to every peer. */
 	UFUNCTION(Server, Reliable)
 	void Server_SetUsername(const FString& NewUsername);
@@ -212,11 +204,28 @@ private:
 	UFUNCTION()
 	void OnRep_Username();
 
+	// ============================================================
+	// Properties
+	// ============================================================
+
+protected:
+	/** Player camera, at the end of the boom. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, category = "Camera")
+	TObjectPtr<UCameraComponent> Camera;
+
+	/** Spring arm following the control rotation. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Camera")
+	TObjectPtr<USpringArmComponent> CameraBoom;
+
+	/** Puts the player's skin on the character mesh, on every machine. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cosmetics")
+	TObjectPtr<UMKHSkinComponent> SkinComponent;
+
+private:
 	/** Player's display username, replicated to every peer. */
 	UPROPERTY(BlueprintReadOnly, EditDefaultsOnly, ReplicatedUsing = OnRep_Username, meta=(AllowPrivateAccess = "true"), Category = "MKHPlayerCharacter")
 	FString Username = "Player";
 
 	/** Guards TrySeedUsernameFromLocalGameInstance so the initial seed runs only once per machine. */
 	bool bUsernameSeeded = false;
-
 };

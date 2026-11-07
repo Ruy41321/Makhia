@@ -7,6 +7,25 @@
 #include "GameplayTagContainer.h"
 #include "RarityDefinition.generated.h"
 
+USTRUCT(BlueprintType)
+struct FRarityColors
+{
+	GENERATED_BODY()
+	
+	/** Color used in the UI for this rarity. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	FLinearColor MainColor = FLinearColor::White;
+	
+	/** Material instance used in the UI as banner background for this rarity. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	TObjectPtr<UMaterialInstance> MI_Banner = nullptr;
+	
+	/** Material instance used in the UI as square background for this rarity. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	TObjectPtr<UMaterialInstance> MI_Square = nullptr;
+	
+};
+
 /**
  * Row struct for the Rarity DataTable.
  * Each row defines a rarity tier with its visual info, roll counts, and probability.
@@ -23,10 +42,10 @@ struct FRarityDefinition : public FTableRowBase
 	/** Display name shown in the UI (e.g. "Common", "Legendary"). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FText DisplayName = FText();
-
-	/** Colour used in the UI for this rarity. */
+	
+	/** Color and material instance for the UI. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	FLinearColor Color = FLinearColor::White;
+	FRarityColors RarityColors;
 
 	/** Number of passive stat effects rolled for items of this rarity. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (ClampMin = "0"))

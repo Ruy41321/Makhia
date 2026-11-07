@@ -173,9 +173,10 @@ bool UMKHAbilityTask_ApplyDMT::GetTargetingForwardVector(FVector& OutForwardVect
 	}
 
 	OutForwardVector = PawnOwner->GetActorForwardVector();
-	if (APlayerController* PC = Cast<APlayerController>(PawnOwner->GetController()))
+	const AController* Controller = PawnOwner->GetController();
+	if (const APlayerController* PC = Cast<APlayerController>(Controller))
 	{
-		if (APlayerCameraManager* CameraManager = PC->PlayerCameraManager)
+		if (const APlayerCameraManager* CameraManager = PC->PlayerCameraManager)
 		{
 			OutForwardVector = CameraManager->GetCameraRotation().Vector();
 		}
@@ -183,6 +184,11 @@ bool UMKHAbilityTask_ApplyDMT::GetTargetingForwardVector(FVector& OutForwardVect
 		{
 			OutForwardVector = PC->GetControlRotation().Vector();
 		}
+	}
+	else if (IsValid(Controller))
+	{
+		// AI: the body faces where it last walked, the control rotation follows the focus (the duel bot's opponent).
+		OutForwardVector = Controller->GetControlRotation().Vector();
 	}
 	OutForwardVector.Normalize();
 

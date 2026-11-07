@@ -12,7 +12,7 @@
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "AbilitySystem/MKHGameplayTags.h"
 #include "Animation/AnimMontage.h"
-#include "Player/MKHPlayerCharacter.h"
+#include "Character/CharacterBase.h"
 
 UMKHGameplayAbility::UMKHGameplayAbility()
 {
@@ -79,9 +79,9 @@ void UMKHGameplayAbility::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	// montage that may have already started on a remote client.
 	if (bWasCancelled && IsValid(MontageToPlay) && ActorInfo != nullptr)
 	{
-		if (AMKHPlayerCharacter* PlayerCharacter = Cast<AMKHPlayerCharacter>(ActorInfo->AvatarActor))
+		if (ACharacterBase* Character = Cast<ACharacterBase>(ActorInfo->AvatarActor))
 		{
-			PlayerCharacter->Multicast_StopMontage(MontageToPlay, 0.1f);
+			Character->Multicast_StopMontage(MontageToPlay, 0.1f);
 		}
 	}
 	
@@ -149,9 +149,9 @@ void UMKHGameplayAbility::SetCharacterOrientation(bool bFollowCamera)
 	AActor* AvatarActor = GetAvatarActorFromActorInfo();
 	if (IsValid(AvatarActor))
 	{
-		if (AMKHPlayerCharacter* Pl = Cast<AMKHPlayerCharacter>(AvatarActor))
+		if (ACharacterBase* Character = Cast<ACharacterBase>(AvatarActor))
 		{
-			Pl->bUseControllerRotationYaw = bFollowCamera;
+			Character->bUseControllerRotationYaw = bFollowCamera;
 		}
 	}
 }
