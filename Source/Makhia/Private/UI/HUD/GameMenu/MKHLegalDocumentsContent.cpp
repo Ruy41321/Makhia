@@ -11,7 +11,7 @@ namespace
 	{
 		FMKHLegalDocumentContent Content;
 		Content.Title = LOCTEXT("PrivacyPolicy_ac94d868dbe8", "Makhìa — Privacy Policy");
-		Content.Introduction.Add(LOCTEXT("PrivacyPolicy_25b6426b65ff", "Last updated: 4 November 2026"));
+		Content.Introduction.Add(LOCTEXT("PrivacyPolicy_fbf25edbf9d4", "Last updated: 7 November 2026"));
 		Content.Introduction.Add(LOCTEXT("PrivacyPolicy_ebcdc50e2d0d", "This policy explains what personal data the game Makhìa (\"the game\") uses, why, and what rights you have. It is written to be short: the game has no accounts of its own, no servers of its own that keep your data, no advertising and no analytics."));
 		{
 			FMKHLegalSection& Section = Content.Sections.AddDefaulted_GetRef();
@@ -25,7 +25,7 @@ namespace
 			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_417e8ee06c28", "Network address (IP) and connection data (ping, route)\nWhy: Connecting you to the other player in a match\nWhere it goes: Your opponent's PC, or Valve's relay servers (Steam Datagram Relay) when a direct connection is not possible\nLegal basis (GDPR art. 6): Performance of the contract (art. 6.1.b)"));
 			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_9c9d3f631b2a", "Voice\nWhy: Voice chat with the players in your party or match\nWhere it goes: Sent in real time to those players only, while you hold the push-to-talk key; never recorded or stored\nLegal basis (GDPR art. 6): Performance of the contract (art. 6.1.b); you choose when to speak and can mute anyone"));
 			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_acd475cec854", "Game status (\"In a duel\", \"In the lobby\")\nWhy: Discord Rich Presence, if Discord is running on your PC\nWhere it goes: Your local Discord app, which shows it to your Discord friends\nLegal basis (GDPR art. 6): Legitimate interest (art. 6.1.f); turn it off in Discord's Activity Privacy settings"));
-			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_f3ef3b9dd419", "Crash reports: crash dump, call stack, game log (may contain Steam names and IDs), hardware and OS information, IP address, random device identifiers set by Unreal Engine (and your Epic Games account ID, if the Epic Games Launcher is signed in on your PC); file paths may contain your Windows user name\nWhy: Finding and fixing crashes\nWhere it goes: BugSplat (USA)\nLegal basis (GDPR art. 6): Consent (art. 6.1.a): after a crash the game asks you each time; nothing is sent unless you press Send, and you can untick the game log"));
+			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_d56f74ac3d41", "Crash reports: crash dump, call stack, game log (may contain Steam names and IDs), hardware and OS information, IP address, random device identifiers set by Unreal Engine (and your Epic Games account ID, if the Epic Games Launcher is signed in on your PC); file paths may contain your Windows user name\nWhy: Finding and fixing crashes\nWhere it goes: Sentry, stored in the European Union (Germany)\nLegal basis (GDPR art. 6): Consent (art. 6.1.a): after a crash the game asks you each time; nothing is sent unless you press Send, and you can untick the game log"));
 			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_2bc59e22d480", "Settings, key bindings, saves, career progress\nWhy: Remembering your preferences and progress\nWhere it goes: Only on your PC (and Steam Cloud, if enabled)\nLegal basis (GDPR art. 6): Performance of the contract (art. 6.1.b)"));
 			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_6eaee631c3de", "The game is free and has no purchases. It does not collect your real name, e-mail, payment data or location."));
 		}
@@ -35,8 +35,8 @@ namespace
 			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_13b4de12f466", "These companies process data as independent controllers or as our processors, under their own policies:"));
 			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_d2fe1fb4fb16", "• Valve Corporation (Steam: sign-in, friends, networking, leaderboards, Steam Cloud) — USA — https://store.steampowered.com/privacy_agreement/"));
 			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_6cea0fb811a4", "• Discord Inc. (Rich Presence, only if you use Discord) — USA — https://discord.com/privacy"));
-			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_7184376179bf", "• BugSplat, LLC (crash reports, only if you choose to send one) — USA — https://docs.bugsplat.com/introduction/production/security-privacy-and-compliance/privacy-policy"));
-			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_61b35f1df034", "Some of them are in the United States. Valve and Discord receive data from you as independent controllers and handle transfers under their own policies. For BugSplat, which processes crash reports on our behalf, transfers rely on the European Commission's Standard Contractual Clauses in its data processing agreement."));
+			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_eb0b98020cbe", "• Functional Software, Inc. (Sentry) (crash reports, only if you choose to send one) — USA, data stored in the European Union (Germany) — https://sentry.io/privacy/"));
+			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_1380d8863133", "Some of them are in the United States. Valve and Discord receive data from you as independent controllers and handle transfers under their own policies. Sentry processes crash reports on our behalf under a data processing agreement and stores them in the European Union; any access from outside the EU relies on the EU-US Data Privacy Framework and, as a fallback, on the European Commission's Standard Contractual Clauses in that agreement."));
 			Section.Paragraphs.Add(LOCTEXT("PrivacyPolicy_9c423cfd4a04", "Other players in your match see your Steam name and avatar, hear your voice when you speak, and may see your IP address when the connection is direct."));
 		}
 		{

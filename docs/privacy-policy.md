@@ -8,7 +8,7 @@ English · [Italiano]({{ site.baseurl }}/it/privacy-policy/) · [Français]({{ s
 
 # Makhìa — Privacy Policy
 
-Last updated: 4 November 2026
+Last updated: 7 November 2026
 
 This policy explains what personal data the game Makhìa ("the game") uses, why, and what rights you have. It is written to be short: the game has no accounts of its own, no servers of its own that keep your data, no advertising and no analytics.
 
@@ -40,7 +40,7 @@ Legal basis (GDPR art. 6): Legitimate interest (art. 6.1.f); turn it off in Disc
 
 **Crash reports: crash dump, call stack, game log (may contain Steam names and IDs), hardware and OS information, IP address, random device identifiers set by Unreal Engine (and your Epic Games account ID, if the Epic Games Launcher is signed in on your PC); file paths may contain your Windows user name**  
 Why: Finding and fixing crashes  
-Where it goes: BugSplat (USA)  
+Where it goes: Sentry, stored in the European Union (Germany)  
 Legal basis (GDPR art. 6): Consent (art. 6.1.a): after a crash the game asks you each time; nothing is sent unless you press Send, and you can untick the game log
 
 **Settings, key bindings, saves, career progress**  
@@ -58,9 +58,9 @@ These companies process data as independent controllers or as our processors, un
 
 - Discord Inc. (Rich Presence, only if you use Discord) — USA — <https://discord.com/privacy>
 
-- BugSplat, LLC (crash reports, only if you choose to send one) — USA — <https://docs.bugsplat.com/introduction/production/security-privacy-and-compliance/privacy-policy>
+- Functional Software, Inc. (Sentry) (crash reports, only if you choose to send one) — USA, data stored in the European Union (Germany) — <https://sentry.io/privacy/>
 
-Some of them are in the United States. Valve and Discord receive data from you as independent controllers and handle transfers under their own policies. For BugSplat, which processes crash reports on our behalf, transfers rely on the European Commission's Standard Contractual Clauses in its data processing agreement.
+Some of them are in the United States. Valve and Discord receive data from you as independent controllers and handle transfers under their own policies. Sentry processes crash reports on our behalf under a data processing agreement and stores them in the European Union; any access from outside the EU relies on the EU-US Data Privacy Framework and, as a fallback, on the European Commission's Standard Contractual Clauses in that agreement.
 
 Other players in your match see your Steam name and avatar, hear your voice when you speak, and may see your IP address when the connection is direct.
 

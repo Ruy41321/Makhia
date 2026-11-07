@@ -8,7 +8,7 @@ lang: fr
 
 # Makhìa — Politique de confidentialité
 
-Dernière mise à jour : 4 novembre 2026
+Dernière mise à jour : 7 novembre 2026
 
 Cette politique explique quelles données personnelles le jeu Makhìa (« le jeu ») utilise, pourquoi, et quels sont tes droits. Elle se veut courte : le jeu n'a pas de comptes à lui, pas de serveurs à lui qui conservent tes données, ni publicité ni statistiques d'utilisation.
 
@@ -40,7 +40,7 @@ Base légale (art. 6 RGPD) : intérêt légitime (art. 6.1.f) ; tu peux le dé
 
 **Rapports de plantage : dump du plantage, pile d'appels, journal du jeu (peut contenir des noms et ID Steam), informations sur le matériel et le système, adresse IP, identifiants aléatoires de l'appareil créés par Unreal Engine (et l'ID de ton compte Epic Games, si tu es connecté à l'Epic Games Launcher sur ton PC) ; les chemins de fichiers peuvent contenir ton nom d'utilisateur Windows**  
 Pourquoi : trouver et corriger les plantages  
-Où ils vont : BugSplat (États-Unis)  
+Où ils vont : Sentry, conservés dans l'Union européenne (Allemagne)  
 Base légale (art. 6 RGPD) : consentement (art. 6.1.a) : après un plantage, le jeu te le demande à chaque fois ; rien n'est envoyé si tu n'appuies pas sur Send, et tu peux exclure le journal du jeu
 
 **Paramètres, touches, sauvegardes, progression de carrière**  
@@ -58,9 +58,9 @@ Ces entreprises traitent les données en tant que responsables indépendants ou 
 
 - Discord Inc. (Rich Presence, seulement si tu utilises Discord) — États-Unis — <https://discord.com/privacy>
 
-- BugSplat, LLC (rapports de plantage, seulement si tu choisis d'en envoyer un) — États-Unis — <https://docs.bugsplat.com/introduction/production/security-privacy-and-compliance/privacy-policy>
+- Functional Software, Inc. (Sentry) (rapports de plantage, seulement si tu choisis d'en envoyer un) — États-Unis, données conservées dans l'Union européenne (Allemagne) — <https://sentry.io/privacy/>
 
-Certaines se trouvent aux États-Unis. Valve et Discord reçoivent les données directement de toi en tant que responsables indépendants et gèrent les transferts selon leurs propres politiques. Pour BugSplat, qui traite les rapports de plantage pour notre compte, les transferts reposent sur les clauses contractuelles types de la Commission européenne figurant dans son accord de traitement des données.
+Certaines se trouvent aux États-Unis. Valve et Discord reçoivent les données directement de toi en tant que responsables indépendants et gèrent les transferts selon leurs propres politiques. Sentry traite les rapports de plantage pour notre compte en vertu d'un accord de traitement des données et les conserve dans l'Union européenne ; tout accès depuis l'extérieur de l'UE repose sur le cadre de protection des données UE-États-Unis (Data Privacy Framework) et, à défaut, sur les clauses contractuelles types de la Commission européenne figurant dans cet accord.
 
 Les autres joueurs de ton match voient ton nom et ton avatar Steam, entendent ta voix quand tu parles et peuvent voir ton adresse IP quand la connexion est directe.
 

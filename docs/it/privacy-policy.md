@@ -8,7 +8,7 @@ lang: it
 
 # Makhìa — Informativa sulla privacy
 
-Ultimo aggiornamento: 4 novembre 2026
+Ultimo aggiornamento: 7 novembre 2026
 
 Questa informativa spiega quali dati personali usa il gioco Makhìa ("il gioco"), perché e quali diritti hai. È scritta per essere breve: il gioco non ha account propri, né server propri che conservano i tuoi dati, né pubblicità o statistiche di utilizzo.
 
@@ -40,7 +40,7 @@ Base giuridica (art. 6 GDPR): legittimo interesse (art. 6.1.f); puoi disattivarl
 
 **Report dei crash: dump del crash, stack delle chiamate, log del gioco (può contenere nomi e ID Steam), informazioni su hardware e sistema operativo, indirizzo IP, identificativi casuali del dispositivo creati da Unreal Engine (e l'ID del tuo account Epic Games, se sul tuo PC hai fatto l'accesso all'Epic Games Launcher); i percorsi dei file possono contenere il tuo nome utente di Windows**  
 Perché: trovare e correggere i crash  
-Dove finiscono: BugSplat (USA)  
+Dove finiscono: Sentry, conservati nell'Unione europea (Germania)  
 Base giuridica (art. 6 GDPR): consenso (art. 6.1.a): dopo un crash il gioco te lo chiede ogni volta; non viene inviato nulla se non premi Send, e puoi escludere il log del gioco
 
 **Impostazioni, comandi, salvataggi, progressi della carriera**  
@@ -58,9 +58,9 @@ Queste aziende trattano i dati come titolari autonomi o come nostri responsabili
 
 - Discord Inc. (Rich Presence, solo se usi Discord) — USA — <https://discord.com/privacy>
 
-- BugSplat, LLC (report dei crash, solo se scegli di inviarne uno) — USA — <https://docs.bugsplat.com/introduction/production/security-privacy-and-compliance/privacy-policy>
+- Functional Software, Inc. (Sentry) (report dei crash, solo se scegli di inviarne uno) — USA, dati conservati nell'Unione europea (Germania) — <https://sentry.io/privacy/>
 
-Alcune di loro si trovano negli Stati Uniti. Valve e Discord ricevono i dati direttamente da te come titolari autonomi e gestiscono i trasferimenti secondo le loro informative. Per BugSplat, che tratta i report dei crash per nostro conto, i trasferimenti si basano sulle Clausole Contrattuali Standard della Commissione europea contenute nel suo accordo sul trattamento dei dati.
+Alcune di loro si trovano negli Stati Uniti. Valve e Discord ricevono i dati direttamente da te come titolari autonomi e gestiscono i trasferimenti secondo le loro informative. Sentry tratta i report dei crash per nostro conto in base a un accordo sul trattamento dei dati e li conserva nell'Unione europea; eventuali accessi dall'esterno dell'UE si basano sul Data Privacy Framework UE-USA e, in subordine, sulle Clausole Contrattuali Standard della Commissione europea contenute in quell'accordo.
 
 Gli altri giocatori della tua partita vedono il tuo nome e avatar Steam, sentono la tua voce quando parli e possono vedere il tuo indirizzo IP quando la connessione è diretta.
 

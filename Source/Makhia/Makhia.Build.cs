@@ -18,7 +18,7 @@ public class Makhia : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[] {
 			"AnimGraphRuntime", "AudioModulation", "UMG", "Slate", "SlateCore",
 			"MoviePlayer", "NavigationSystem", "LevelSequence", "MovieScene", 
-			"CoreOnline", "AudioMixer", "AudioMixerCore", "SignalProcessing", "AudioCaptureCore", "Voice"
+			"CoreOnline", "EngineSettings", "AudioMixer", "AudioMixerCore", "SignalProcessing", "AudioCaptureCore", "Voice", "Json"
 		});
 	}
 }
